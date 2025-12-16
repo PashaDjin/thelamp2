@@ -29,6 +29,21 @@ const WALLET_COLORS = {
   'ИП Паши':      '#D9D9D9'
 };
 
+// === Константы конфигурации и диапазонов ===
+const SHT_IN        = '⏬ ВНЕСЕНИЕ';
+const SHT_PROV      = '☑️ ПРОВОДКИ';
+const SHT_ACTS      = 'РЕЕСТР АКТОВ';
+const SHT_DICT      = 'Справочник';
+const IN_START_ROW  = 10;
+const IN_END_ROW    = 40;
+const IN_HEIGHT     = IN_END_ROW - IN_START_ROW + 1; // 31
+const IN_COL_B      = 2; // B
+const IN_COL_F      = 6; // F
+const IN_COL_J      = 10; // J
+const DATE_FORMAT   = 'dd.MM.yyyy';
+const NBSP_RE       = /\u00A0/g; // non-breaking space
+
+
 /**
  * Показывает HTML-диалог и блокирующе ждёт ответа (до таймаута).
  * @param {Object} options
@@ -231,11 +246,14 @@ function createEntriesFromSelectedActs_({ mode }) {
   // Автоматически оформляем проводки по выбранным актам (без HTML-подтверждения).
   const lines = items.map(it => `• ${it.addr} — ${it.amount} (${it.actNo})`);
 
+  // Нормализуем вход (очистка NBSP + trim) в B..F, чтобы ненужные символы не мешали поиску пустой строки
+  normalizeInputBF_(shIn);
+
   // Ищем первую пустую строку во "⏬ ВНЕСЕНИЕ" в блоке B10:F40 (учитываем только B..F)
   const firstRow = findFirstEmptyRowInInput_(shIn);
   if (!firstRow) {
     // Диагностика: выясним, какие именно строки/ячейки заняты в B10:F40 — покажем короткий отчёт
-    const diagRange = shIn.getRange(10, 2, 31, 5); // B10:F40
+    const diagRange = shIn.getRange(IN_START_ROW, IN_COL_B, IN_HEIGHT, IN_COL_F - IN_COL_B + 1); // B10:F40
     const diagVals  = diagRange.getValues();
     const nonEmptyRows = [];
     for (let ri = 0; ri < diagVals.length; ri++) {
@@ -245,7 +263,7 @@ function createEntriesFromSelectedActs_({ mode }) {
         const v = row[ci];
         if (v != null && String(v).trim() !== '') {
           // колонка (B..F)
-          const colNum = 2 + ci;
+          const colNum = IN_COL_B + ci;
           const colLetter = String.fromCharCode(64 + colNum);
           let s = String(v);
           s = s.replace(/\n/g, ' ');
@@ -253,10 +271,10 @@ function createEntriesFromSelectedActs_({ mode }) {
           cols.push(`${colLetter}:${s}`);
         }
       }
-      if (cols.length) nonEmptyRows.push({row: 10 + ri, cols});
+      if (cols.length) nonEmptyRows.push({row: IN_START_ROW + ri, cols});
     }
 
-    let msg = 'Во "⏬ ВНЕСЕНИЕ" нет полностью пустых строк в диапазоне B10:F40 (учитываются только B..F).';
+    let msg = `Во "⏬ ВНЕСЕНИЕ" нет полностью пустых строк в диапазоне B10:F40 (учитываются только B..F).`;
     msg += '\nНайдено занятых строк: ' + nonEmptyRows.length + '.';
     if (nonEmptyRows.length) {
       msg += '\nПервые несколько (строка: столбцы=значения):\n';
@@ -417,6 +435,8 @@ function runTransfer(options = {}) {
     rowErrors.push(`B${10 + rowIdx}: ${msg}`);
   }
 
+  // Очистим возможные нежелательные пробельные символы в B..F перед обработкой
+  normalizeInputBF_(shIn);
   const inRange = shIn.getRange('B10:L40');
   const inVals  = inRange.getValues();   // [ [B..L], ... ]
 
@@ -766,10 +786,8 @@ function runTransfer(options = {}) {
         }
       }
 
-      // ставим флаг в P или Q
-      shActs.getRange(res.row, targetCol).setValue(true);
+      // помечаем флаг в local actsGrid и отложенно запишем батчем в shActs
       actsGrid[res.gridIndex][targetCol - 1] = true;
-
       if (isMaster) masterFlagRows.add(res.row);
       else          depFlagRows.add(res.row);
     }
@@ -868,9 +886,29 @@ function runTransfer(options = {}) {
     }
   }
 
-  /* === Форматирование РЕЕСТРА АКТОВ по результатам === */
+  /* === Запись флагов в РЕЕСТР АКТОВ батчем === */
   if (shActs) {
-    // 1) Подсветка выручки по акту (E)
+    (function applyActsFlags_() {
+      const lastActsRow = shActs.getLastRow();
+      if (lastActsRow <= 1) return;
+      const height = Math.max(1, lastActsRow - 1);
+
+      function setFlagColumn(colIndex, rowsSet) {
+        if (!rowsSet || rowsSet.size === 0) return;
+        const colRange = shActs.getRange(2, colIndex, height, 1);
+        const colVals = colRange.getValues();
+        rowsSet.forEach(r => {
+          const idx = r - 2;
+          if (idx >= 0 && idx < colVals.length) colVals[idx][0] = true;
+        });
+        colRange.setValues(colVals);
+      }
+
+      setFlagColumn(ACTS_COL.MASTER_FLAG, masterFlagRows);
+      setFlagColumn(ACTS_COL.RET_FLAG,    depFlagRows);
+    })();
+
+    // 1) Подсветка выручки по акту (E) — батчем по найденным строкам
     Object.keys(revenueColorsByRow).forEach(rowStr => {
       const row = Number(rowStr);
       const color = revenueColorsByRow[rowStr];
@@ -1051,6 +1089,38 @@ function fillDate_(offset) {
   datesRange.setNumberFormat('dd"."mm"."yyyy');
 }
 
+/** Нормализует и очищает диапазон B..F (удаляет NBSP и trim) — не трогает формулы */
+function normalizeInputBF_(sh) {
+  if (!sh) return;
+  const startRow = IN_START_ROW;
+  const height = IN_HEIGHT;
+  const startCol = IN_COL_B;
+  const width = IN_COL_F - IN_COL_B + 1;
+
+  const range = sh.getRange(startRow, startCol, height, width);
+  const vals = range.getValues();
+  const forms = range.getFormulas();
+  let changed = false;
+
+  for (let r = 0; r < vals.length; r++) {
+    for (let c = 0; c < vals[r].length; c++) {
+      // Не трогаем ячейки с формулой
+      const formula = forms[r][c];
+      if (formula && formula.toString().trim() !== '') continue;
+
+      const v = vals[r][c];
+      if (typeof v === 'string') {
+        const newV = v.replace(NBSP_RE, ' ').trim();
+        if (newV !== v) {
+          vals[r][c] = newV === '' ? '' : newV;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  if (changed) range.setValues(vals);
+}
 /* === Utils === */
 
 /** Парсит дату из Date | числа (серийная) | строки dd.MM.yyyy. Возвращает Date или null. */
@@ -1187,11 +1257,10 @@ function resolveArticleByDec_(ui, dec, meta, hashes, byDec, dictSheet) {
  * Возвращает номер строки или null, если нет.
  */
 function findFirstEmptyRowInInput_(sh) {
-  const startRow = 10;
-  const endRow   = 40;
-  const height   = endRow - startRow + 1;
+  const startRow = IN_START_ROW;
+  const height   = IN_HEIGHT;
 
-  const range = sh.getRange(startRow, 2, height, 5); // B..F — считаем строку занятой только по B..F
+  const range = sh.getRange(startRow, IN_COL_B, height, IN_COL_F - IN_COL_B + 1); // B..F — считаем строку занятой только по B..F
   const vals  = range.getValues();
 
   for (let i = 0; i < vals.length; i++) {
