@@ -228,9 +228,8 @@ function createEntriesFromSelectedActs_({ mode }) {
           ? 'Провести выручку по актам'
           : 'Провести операции по актам';
 
+  // Автоматически оформляем проводки по выбранным актам (без HTML-подтверждения).
   const lines = items.map(it => `• ${it.addr} — ${it.amount} (${it.actNo})`);
-  const ok = confirmDialog_(title, `Камрад, оформить проводки по объектам:\n\n${lines.join('\n')}\n\nПродолжаем?`);
-  if (!ok) return;
 
   // Ищем первую пустую строку во "⏬ ВНЕСЕНИЕ" в блоке B10:G40
   const firstRow = findFirstEmptyRowInInput_(shIn);
