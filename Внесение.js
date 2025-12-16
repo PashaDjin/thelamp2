@@ -856,36 +856,8 @@ function runTransfer(options = {}) {
   // Записываем B..G
   shIn.getRange(IN_START_ROW, IN_COL_B, height, 6).setValues(outVals);
 
-  // Очищаем форматирование/заметки в B..G только для проведённых строк (batch по блокам)
-  if (processedRows.size) {
-    let blockStart = null;
-    let blockLen = 0;
-
-    for (let i = 0; i < height; i++) {
-      const idx = i;
-      const isProc = processedRows.has(i);
-      if (isProc) {
-        if (blockStart === null) {
-          blockStart = idx;
-          blockLen = 1;
-        } else {
-          blockLen++;
-        }
-      } else {
-        if (blockStart !== null) {
-          const rStart = IN_START_ROW + blockStart;
-          shIn.getRange(rStart, IN_COL_B, blockLen, 6).clearFormat().clearNote();
-          blockStart = null;
-          blockLen = 0;
-        }
-      }
-    }
-    // закрываем последний блок
-    if (blockStart !== null) {
-      const rStart = IN_START_ROW + blockStart;
-      shIn.getRange(rStart, IN_COL_B, blockLen, 6).clearFormat().clearNote();
-    }
-  }
+  // Форматирование и заметки не трогаем — очищаем только значения (они уже записаны выше в B..G)
+  // (Оставляем форматирование и примечания на месте по просьбе пользователя.)
 
   /* === Новые расшифровки — как раньше === */
   if (toSuggest.size) {
