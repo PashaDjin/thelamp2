@@ -40,9 +40,9 @@ const WALLET_COLORS = {
  * @returns {{button: string, value: string}|null}
  */
 function showDialogAndWait_({ title, message, buttons, withInput = false, defaultValue = '' }) {
-  const props = PropertiesService.getDocumentProperties();
+  const cache = CacheService.getScriptCache();
   const token = `dlg_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  props.deleteProperty(token);
+  cache.remove(token);
 
   const html = HtmlService.createHtmlOutput(`
     <div style="font-family:Arial,sans-serif;white-space:pre-wrap;">
@@ -72,19 +72,19 @@ function showDialogAndWait_({ title, message, buttons, withInput = false, defaul
   const timeoutMs = 20000;
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const data = props.getProperty(token);
+    const data = cache.get(token);
     if (data) {
-      props.deleteProperty(token);
+      cache.remove(token);
       try {
         return JSON.parse(data);
       } catch (e) {
         return null;
       }
     }
-    Utilities.sleep(100);
+    Utilities.sleep(50);
   }
 
-  props.deleteProperty(token);
+  cache.remove(token);
   return null;
 }
 
@@ -98,7 +98,13 @@ function escapeHtml_(s) {
 }
 
 function setDialogResult(token, data) {
-  PropertiesService.getDocumentProperties().setProperty(token, JSON.stringify(data || {}));
+  // use cache for faster cross-process signalling
+  try {
+    CacheService.getScriptCache().put(token, JSON.stringify(data || {}), 120);
+  } catch (e) {
+    // fallback to properties if cache fails for any reason
+    PropertiesService.getDocumentProperties().setProperty(token, JSON.stringify(data || {}));
+  }
 }
 
 function confirmDialog_(title, message) {
