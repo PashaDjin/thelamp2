@@ -313,17 +313,14 @@ function createEntriesFromSelectedActs_({ mode }) {
     // Для выручки по актам: на каждый акт — две строки (Выручка по акту + НРП 3%)
     items.forEach(it => {
       // 1) основная выручка по акту — ставим дату сегодня сразу (как и для НРП)
-      // Формат: B дата, C кошелёк, D сумма, E статья, F объект, G акт, H altArt, I категория, J тип
+      // Формат: B дата, C кошелёк, D сумма, E статья, F объект, G акт
       values.push([
         todayDate,       // B: дата — ставим сегодня
         '',              // C: кошелёк
         it.amount,       // D: сумма акта
         article,         // E: "Выручка по акту"
         it.addr,         // F: объект (адрес)
-        it.actNo,        // G: акт
-        '',              // H: altArticle
-        'Выручка',       // I: категория — дефолт
-        'Доход'          // J: тип — Доход
+        it.actNo         // G: акт
       ]);
 
       // 2) НРП — 3% от суммы акта, датой сегодня
@@ -335,10 +332,7 @@ function createEntriesFromSelectedActs_({ mode }) {
         nrpAmount,       // D: 3% от суммы акта
         'НРП',           // E: статья НРП
         it.addr,         // F: объект
-        it.actNo,        // G: акт
-        '',              // H: altArticle
-        'НРП',           // I: категория — пометка
-        'Расход'         // J: тип — Расход
+        it.actNo         // G: акт
       ]);
     });
   } else {
@@ -357,7 +351,7 @@ function createEntriesFromSelectedActs_({ mode }) {
     ]));
   }
 
-  const targetRange = shIn.getRange(firstRow, 2, values.length, 9); // B..J
+  const targetRange = shIn.getRange(firstRow, 2, values.length, 6); // B..G
   targetRange.setValues(values);
   // Формат даты для колонки B
   shIn.getRange(firstRow, 2, values.length, 1).setNumberFormat('dd"."mm"."yyyy');
