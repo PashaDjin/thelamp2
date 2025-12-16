@@ -259,20 +259,24 @@ function createEntriesFromSelectedActs_({ mode }) {
           ? 'Выручка по акту'
           : '';
 
-  // Готовим массив значений для B..G
+  // Готовим массив значений для B..J (расширили до 9 колонок: B..J)
   let values = [];
 
   if (mode === 'REVENUE') {
     // Для выручки по актам: на каждый акт — две строки (Выручка по акту + НРП 3%)
     items.forEach(it => {
-// 1) основная выручка по акту — ставим дату сегодня сразу (как и для НРП)
-    values.push([
-      todayDate,       // B: дата — ставим сегодня
+      // 1) основная выручка по акту — ставим дату сегодня сразу (как и для НРП)
+      // Формат: B дата, C кошелёк, D сумма, E статья, F объект, G акт, H altArt, I категория, J тип
+      values.push([
+        todayDate,       // B: дата — ставим сегодня
         '',              // C: кошелёк
         it.amount,       // D: сумма акта
         article,         // E: "Выручка по акту"
         it.addr,         // F: объект (адрес)
-        it.actNo         // G: акт
+        it.actNo,        // G: акт
+        '',              // H: altArticle
+        'Выручка',       // I: категория — дефолт
+        'Доход'          // J: тип — Доход
       ]);
 
       // 2) НРП — 3% от суммы акта, датой сегодня
@@ -284,22 +288,29 @@ function createEntriesFromSelectedActs_({ mode }) {
         nrpAmount,       // D: 3% от суммы акта
         'НРП',           // E: статья НРП
         it.addr,         // F: объект
-        it.actNo         // G: акт
+        it.actNo,        // G: акт
+        '',              // H: altArticle
+        'НРП',           // I: категория — пометка
+        'Расход'         // J: тип — Расход
       ]);
     });
   } else {
     // MASTER / DEPOSIT_RETURN — старая логика, по одной строке на акт
+    // Записываем B..J и ставим дефолтные категория/тип, чтобы авто-проведение прошло
     values = items.map(it => ([
       todayDate,    // B: дата
       '',           // C: кошелёк
       it.amount,    // D: сумма
       article,      // E: статья
       it.addr,      // F: расшифровка (адрес)
-      it.actNo      // G: акт
+      it.actNo,     // G: акт
+      '',           // H: altArticle
+      article,      // I: категория — по умолчанию
+      'Расход'      // J: тип — выплатная операция
     ]));
   }
 
-  const targetRange = shIn.getRange(firstRow, 2, values.length, 6); // B..G
+  const targetRange = shIn.getRange(firstRow, 2, values.length, 9); // B..J
   targetRange.setValues(values);
   // Формат даты для колонки B
   shIn.getRange(firstRow, 2, values.length, 1).setNumberFormat('dd"."mm"."yyyy');
@@ -787,13 +798,13 @@ function runTransfer(options = {}) {
     const row = inVals[i];
     const isBlankRow = row.every(v => v == null || String(v).trim() === '');
     if (processedRows.has(i) || isBlankRow) {
-      outVals.push(['', '', '', '', '', '']);
+      outVals.push(['', '', '', '', '', '', '', '', '']);
     } else {
-      // возвращаем исходные (или уже поправленные датой) значения B..G
-      outVals.push([row[0], row[1], row[2], row[3], row[4], row[5]]);
+      // возвращаем исходные (или уже поправленные датой) значения B..J
+      outVals.push([row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]]);
     }
   }
-  shIn.getRange(10, 2, height, 6).setValues(outVals);
+  shIn.getRange(10, 2, height, 9).setValues(outVals);
 
   /* === Новые расшифровки — как раньше === */
   if (toSuggest.size) {
@@ -1157,7 +1168,7 @@ function findFirstEmptyRowInInput_(sh) {
   const endRow   = 40;
   const height   = endRow - startRow + 1;
 
-  const range = sh.getRange(startRow, 2, height, 6); // B..G
+  const range = sh.getRange(startRow, 2, height, 9); // B..J
   const vals  = range.getValues();
 
   for (let i = 0; i < vals.length; i++) {
