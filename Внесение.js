@@ -305,7 +305,7 @@ function createEntriesFromSelectedActs_({ mode }) {
           ? 'Выручка по акту'
           : '';
 
-  // Готовим массив значений для B..J (расширили до 9 колонок: B..J)
+  // Готовим массив значений для записи в B..G
   let values = [];
 
   if (mode === 'REVENUE') {
@@ -335,22 +335,37 @@ function createEntriesFromSelectedActs_({ mode }) {
       ]);
     });
   } else {
-    // MASTER / DEPOSIT_RETURN — старая логика, по одной строке на акт
-    // Записываем B..J и ставим дефолтные категория/тип, чтобы авто-проведение прошло
+    // MASTER / DEPOSIT_RETURN — одна строка на акт; пишем только B..G по просьбе владельца
     values = items.map(it => ([
       todayDate,    // B: дата
       '',           // C: кошелёк
       it.amount,    // D: сумма
       article,      // E: статья
       it.addr,      // F: расшифровка (адрес)
-      it.actNo,     // G: акт
-      '',           // H: altArticle
-      article,      // I: категория — по умолчанию
-      'Расход'      // J: тип — выплатная операция
+      it.actNo      // G: акт
     ]));
   }
 
-  const targetRange = shIn.getRange(firstRow, 2, values.length, 6); // B..G
+  // Перед записью уверимся, что все строки имеют ровно 6 колонок (B..G).
+  // Если кто-то случайно сформировал шире — обрежем, если уже короче — дополним пустыми.
+  const EXPECTED_COLS = 6;
+  let adjusted = false;
+  values = values.map((r, idx) => {
+    if (!Array.isArray(r)) {
+      adjusted = true;
+      return Array(EXPECTED_COLS).fill('');
+    }
+    if (r.length === EXPECTED_COLS) return r;
+    adjusted = true;
+    if (r.length > EXPECTED_COLS) return r.slice(0, EXPECTED_COLS);
+    return r.concat(Array(EXPECTED_COLS - r.length).fill(''));
+  });
+  if (adjusted) {
+    console.warn('createEntriesFromSelectedActs_: adjusted values rows to width 6 for B..G', values);
+    SpreadsheetApp.getActive().toast('Внимание: некоторые строки были приведены к ширине B..G перед записью.', 'Проведение', 6);
+  }
+
+  const targetRange = shIn.getRange(firstRow, 2, values.length, EXPECTED_COLS); // B..G
   targetRange.setValues(values);
   // Формат даты для колонки B
   shIn.getRange(firstRow, 2, values.length, 1).setNumberFormat('dd"."mm"."yyyy');
@@ -424,7 +439,26 @@ function runTransfer(options = {}) {
   const BIG_LIMIT = 1e6;
 
   const rowErrors = [];
+  // Счётчики типов ошибок для компактной статистики
+  const failureCounts = {
+    noWallet: 0,
+    noAmount: 0,
+    missingArticle: 0,
+    missingAct: 0,
+    duplicate: 0,
+    other: 0
+  };
+
   function err(rowIdx, msg) {
+    // Категоризация ошибки по тексту для статистики
+    const lower = String(msg).toLowerCase();
+    if (lower.includes('кошел')) failureCounts.noWallet++;
+    else if (lower.includes('сум') || lower.includes('равна 0')) failureCounts.noAmount++;
+    else if (lower.includes('статья') || lower.includes('тип') || lower.includes('катег')) failureCounts.missingArticle++;
+    else if (lower.includes('акт')) failureCounts.missingAct++;
+    else if (lower.includes('дубл') || lower.includes('повтор')) failureCounts.duplicate++;
+    else failureCounts.other++;
+
     rowErrors.push(`B${10 + rowIdx}: ${msg}`);
   }
 
@@ -866,6 +900,9 @@ function runTransfer(options = {}) {
       const batchBtn = ui.alert('Режим добавления', 'Добавить все сразу (Да) или по одной с подтверждением (Нет)?', ui.ButtonSet.YES_NO);
       const addAllAtOnce = (batchBtn === ui.Button.YES);
 
+      // Для режима "Добавить все сразу" собираем строки и добавляем батчем
+      const rowsToAppend = [];
+
       toSuggest.forEach((set, art) => {
         if (!meta.has(art)) return;
         const m = meta.get(art);
@@ -880,7 +917,7 @@ function runTransfer(options = {}) {
 
         if (addAllAtOnce) {
           arr.forEach(d => {
-            shDict.appendRow([m.t, m.c, art, d, m.req]);
+            rowsToAppend.push([m.t, m.c, art, d, m.req]);
             newDecs.push(`${art} — ${d}`);
           });
         } else {
@@ -893,6 +930,12 @@ function runTransfer(options = {}) {
           });
         }
       });
+
+      if (rowsToAppend.length) {
+        const last = shDict.getLastRow();
+        const startRow = Math.max(2, last + 1);
+        shDict.getRange(startRow, 1, rowsToAppend.length, 5).setValues(rowsToAppend);
+      }
     }
   }
 
@@ -937,19 +980,37 @@ function runTransfer(options = {}) {
     function applyStyleBlocks(colIndex, rowsSet) {
       if (!rowsSet || rowsSet.size === 0) return;
       const rows = Array.from(rowsSet).sort((a,b)=>a-b);
+      const minRow = rows[0];
+      const maxRow = rows[rows.length - 1];
+      const height = maxRow - minRow + 1;
+
+      // Забираем существующие значения фонов/цветов/заметок, чтобы не перезаписывать лишнее
+      const rng = shActs.getRange(minRow, colIndex, height, 1);
+      const existingBG = rng.getBackgrounds();
+      const existingFontColors = rng.getFontColors();
+      const existingNotes = rng.getNotes();
+
+      // Помечаем нужные строки внутри диапазона
+      rows.forEach(r => {
+        const idx = r - minRow;
+        existingBG[idx][0] = COLOR_BG_FULL_GREEN;
+        existingFontColors[idx][0] = COLOR_FONT_DARKGREEN;
+        existingNotes[idx][0] = '';
+      });
+
+      // Пишем батчем фон/цвет/заметки (меньше вызовов API)
+      rng.setBackgrounds(existingBG);
+      rng.setFontColors(existingFontColors);
+      rng.setNotes(existingNotes);
+
+      // Для зачёркивания (setFontLine) вызываем только для блоков подряд идущих строк
       let blockStart = rows[0];
       let prev = rows[0];
       for (let i = 1; i <= rows.length; i++) {
         const cur = rows[i];
         if (!cur || cur !== prev + 1) {
-          // apply block from blockStart..prev
-          const rStart = blockStart;
           const len = prev - blockStart + 1;
-          const rng = shActs.getRange(rStart, colIndex, len, 1);
-          rng.setBackground(COLOR_BG_FULL_GREEN);
-          rng.setFontColor(COLOR_FONT_DARKGREEN);
-          rng.setFontLine('line-through');
-          rng.setNote('');
+          shActs.getRange(blockStart, colIndex, len, 1).setFontLine('line-through');
           blockStart = cur;
         }
         prev = cur;
@@ -992,8 +1053,16 @@ function runTransfer(options = {}) {
   const summary = summaryParts.join('. ');
   SpreadsheetApp.getActive().toast(summary, 'Готово', 8);
 
-  // Логируем подробности для отладки (можно перенести в отдельный лист при необходимости)
+  // Логируем подробности и статистику для отладки (можно перенести в отдельный лист при необходимости)
+  const stats = [];
+  if (failureCounts.noWallet) stats.push(`Нет кошелька: ${failureCounts.noWallet}`);
+  if (failureCounts.noAmount) stats.push(`Нет суммы/0: ${failureCounts.noAmount}`);
+  if (failureCounts.missingArticle) stats.push(`Нет статьи/категории/типа: ${failureCounts.missingArticle}`);
+  if (failureCounts.missingAct) stats.push(`Нет акта: ${failureCounts.missingAct}`);
+  if (failureCounts.duplicate) stats.push(`Дубликаты: ${failureCounts.duplicate}`);
+  if (failureCounts.other) stats.push(`Прочие ошибки: ${failureCounts.other}`);
   console.info(lines.join('\n'));
+  if (stats.length) console.info('Статистика ошибок: ' + stats.join('; '));
 
   // Если были новые расшифровки — покажем интерактивный диалог добавления (как и раньше)
   // (оставляем существующую логику выше, она уже обработана до этого шага).
