@@ -234,7 +234,36 @@ function createEntriesFromSelectedActs_({ mode }) {
   // Ищем первую пустую строку во "⏬ ВНЕСЕНИЕ" в блоке B10:G40
   const firstRow = findFirstEmptyRowInInput_(shIn);
   if (!firstRow) {
-    okDialog_('Нет места', 'Камрад, во "⏬ ВНЕСЕНИЕ" нет свободных строк в диапазоне B10:G40.');
+    // Диагностика: выясним, какие именно строки/ячейки заняты в B10:J40 — покажем короткий отчёт
+    const diagRange = shIn.getRange(10, 2, 31, 9); // B10:J40
+    const diagVals  = diagRange.getValues();
+    const nonEmptyRows = [];
+    for (let ri = 0; ri < diagVals.length; ri++) {
+      const row = diagVals[ri];
+      const cols = [];
+      for (let ci = 0; ci < row.length; ci++) {
+        const v = row[ci];
+        if (v != null && String(v).trim() !== '') {
+          // колонка (B..J)
+          const colNum = 2 + ci;
+          const colLetter = String.fromCharCode(64 + colNum);
+          let s = String(v);
+          s = s.replace(/\n/g, ' ');
+          if (s.length > 30) s = s.slice(0, 27) + '...';
+          cols.push(`${colLetter}:${s}`);
+        }
+      }
+      if (cols.length) nonEmptyRows.push({row: 10 + ri, cols});
+    }
+
+    let msg = 'Во "⏬ ВНЕСЕНИЕ" нет полностью пустых строк в диапазоне B10:J40.';
+    msg += '\nНайдено занятых строк: ' + nonEmptyRows.length + '.';
+    if (nonEmptyRows.length) {
+      msg += '\nПервые несколько (строка: столбцы=значения):\n';
+      msg += nonEmptyRows.slice(0, 6).map(r => `• ${r.row}: ${r.cols.join(', ')}`).join('\n');
+    }
+
+    okDialog_('Нет места', msg);
     return;
   }
 
