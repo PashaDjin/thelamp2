@@ -3,9 +3,7 @@ function onOpen() {
     .createMenu('⚙️ Проводки')
     .addItem('🚀 Провести', 'runTransfer')
     .addSeparator()
-    .addItem('📅 Сегодня', 'setToday')
-    .addItem('📆 Вчера', 'setYesterday')
-    .addSeparator()
+
     .addItem('Провести выручку по актам', 'createRevenueFromActs')
     .addSeparator()
     .addItem('Провести ЗП', 'createMasterFromActs')
@@ -14,9 +12,10 @@ function onOpen() {
 }
 const MOSCOW_TZ = 'Europe/Moscow';
 // Цвета для форматирования (подгони HEX под фактические из таблицы)
+// === Цвета и стили ===
 const COLOR_BG_FULL_GREEN  = '#C6E0B4'; // светло-зелёный фон "закрыто"
 const COLOR_FONT_DARKGREEN = '#385723'; // тёмно-зелёный текст
-const COLOR_BG_PARTIAL_YELL = '#FFF2CC'; // жёлтый фон "частично"
+// NOTE: COLOR_BG_PARTIAL_YELL removed — не используется, удалён как рудимент.
 
 // Цвета по кошелькам для подсветки E в РЕЕСТРЕ АКТОВ
 const WALLET_COLORS = {
@@ -921,29 +920,45 @@ function runTransfer(options = {}) {
     })();
 
     // 1) Подсветка выручки по акту (E) — батчем по найденным строкам
-    Object.keys(revenueColorsByRow).forEach(rowStr => {
-      const row = Number(rowStr);
-      const color = revenueColorsByRow[rowStr];
-      if (!row || !color) return;
-      shActs.getRange(row, 5).setBackground(color); // E
-    });
+    (function applyRevenueColors_(){
+      const keys = Object.keys(revenueColorsByRow).map(k => Number(k)).filter(n => Number.isFinite(n));
+      if (!keys.length) return;
+      const minRow = Math.min(...keys);
+      const maxRow = Math.max(...keys);
+      const height = maxRow - minRow + 1;
+      const bg = Array.from({length: height}, () => [null]);
+      keys.forEach(r => {
+        const color = revenueColorsByRow[String(r)];
+        if (color) bg[r - minRow][0] = color;
+      });
+      shActs.getRange(minRow, 5, height, 1).setBackgrounds(bg);
+    })();
 
-    // 2) Полные выплаты ЗП/депозита — зелёный фон + зачёркнутый текст в K / J
-    masterFlagRows.forEach(row => {
-      const cell = shActs.getRange(row, ACTS_COL.HANDS); // K
-      cell.setBackground(COLOR_BG_FULL_GREEN);
-      cell.setFontColor(COLOR_FONT_DARKGREEN);
-      cell.setFontLine('line-through');
-      cell.setNote('');
-    });
+    // 2) Полные выплаты ЗП/депозита — зелёный фон + зачёркнутый текст в K / J (применяем блочно)
+    function applyStyleBlocks(colIndex, rowsSet) {
+      if (!rowsSet || rowsSet.size === 0) return;
+      const rows = Array.from(rowsSet).sort((a,b)=>a-b);
+      let blockStart = rows[0];
+      let prev = rows[0];
+      for (let i = 1; i <= rows.length; i++) {
+        const cur = rows[i];
+        if (!cur || cur !== prev + 1) {
+          // apply block from blockStart..prev
+          const rStart = blockStart;
+          const len = prev - blockStart + 1;
+          const rng = shActs.getRange(rStart, colIndex, len, 1);
+          rng.setBackground(COLOR_BG_FULL_GREEN);
+          rng.setFontColor(COLOR_FONT_DARKGREEN);
+          rng.setFontLine('line-through');
+          rng.setNote('');
+          blockStart = cur;
+        }
+        prev = cur;
+      }
+    }
 
-    depFlagRows.forEach(row => {
-      const cell = shActs.getRange(row, ACTS_COL.DEPOSIT); // J
-      cell.setBackground(COLOR_BG_FULL_GREEN);
-      cell.setFontColor(COLOR_FONT_DARKGREEN);
-      cell.setFontLine('line-through');
-      cell.setNote('');
-    });
+    applyStyleBlocks(ACTS_COL.HANDS, masterFlagRows);
+    applyStyleBlocks(ACTS_COL.DEPOSIT, depFlagRows);
   }
 
   /* === Финальный отчёт === */
@@ -1007,9 +1022,10 @@ function colorRows_(sh, start, rows) {
   sh.getRange(start, 2, n, 1).setBackgrounds(walletColors);
 }
 
-/* === Date helpers === */
-function setToday() { fillDate_(0); }
-function setYesterday() { fillDate_(-1); }
+/* === Date helpers — Удалено: setToday/setYesterday/fillDate_ (устаревшие) === */
+// Ранее здесь были вспомогательные функции для быстрой установки даты, но
+// они удалены как рудименты по запросу владельца проекта.
+
 
 /* === Internal transfers mirroring === */
 
@@ -1083,28 +1099,7 @@ function handleInternalTransfer_(row) {
   return { extraRow, error: null, required: true };
 }
 
-function fillDate_(offset) {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('⏬ ВНЕСЕНИЕ');
-
-  const sumsRange  = sh.getRange('D10:D40'); // читаем суммы
-  const datesRange = sh.getRange('B10:B40'); // будем писать даты
-
-  const sums  = sumsRange.getValues();      // [[D8],[D9],...]
-  const dates = datesRange.getValues();     // [[B8],[B9],...]
-
-  const d = new Date();
-  d.setDate(d.getDate() + offset);
-  const f = Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd.MM.yyyy');
-
-  for (let i = 0; i < dates.length; i++) {
-    const raw = sums[i][0];                // значение из D
-    const hasAmount = raw !== '' && raw != null; // 0 допускаем
-    if (hasAmount) dates[i][0] = f;        // ставим дату в B
-  }
-
-  datesRange.setValues(dates);
-  datesRange.setNumberFormat('dd"."mm"."yyyy');
-}
+// fillDate_ удалена — устаревшая функция (setToday/setYesterday удалены)
 
 /** Нормализует и очищает диапазон B..F (удаляет NBSP и trim) — не трогает формулы */
 function normalizeInputBF_(sh) {
