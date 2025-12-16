@@ -45,27 +45,22 @@ function showDialogAndWait_({ title, message, buttons, withInput = false, defaul
   cache.remove(token);
 
   const html = HtmlService.createHtmlOutput(`
-    <div style="font-family:Arial,sans-serif;white-space:pre-wrap;">
-      ${escapeHtml_(message)}
-    </div>
-    ${withInput ? `
-      <div style="margin-top:12px;">
-        <input id="dlg-input" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml_(defaultValue)}" />
-      </div>
-    ` : ''}
-    <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
-      ${buttons.map(b => `<button onclick="submitDialog('${b}')" style="padding:6px 12px;">${escapeHtml_(b)}</button>`).join('')}
-    </div>
+    <div style="white-space:pre-wrap;">${escapeHtml_(message)}</div>
+    ${withInput ? `<div><input id="dlg-input" value="${escapeHtml_(defaultValue)}" /></div>` : ''}
+    <div>${buttons.map(b => `<button onclick="submitDialog('${b}')">${escapeHtml_(b)}</button>`).join('')}</div>
     <script>
       function submitDialog(btn){
         const v = document.getElementById('dlg-input') ? document.getElementById('dlg-input').value : '';
         google.script.run.withSuccessHandler(function(){ google.script.host.close(); })
           .setDialogResult('${token}', { button: btn, value: v });
       }
+      document.addEventListener('DOMContentLoaded', function(){
+        const b = document.querySelector('button'); if(b) b.focus();
+      });
     </script>
   `)
-    .setWidth(420)
-    .setHeight(withInput ? 240 : 200);
+    .setWidth(380)
+    .setHeight(withInput ? 180 : 140);
 
   SpreadsheetApp.getUi().showModalDialog(html, title);
 
@@ -81,7 +76,7 @@ function showDialogAndWait_({ title, message, buttons, withInput = false, defaul
         return null;
       }
     }
-    Utilities.sleep(50);
+    Utilities.sleep(30);
   }
 
   cache.remove(token);
@@ -316,7 +311,7 @@ function createEntriesFromSelectedActs_({ mode }) {
       errors.slice(0, 5).map(e => '• ' + e).join('\n');
   }
 
-  okDialog_('Готово', msg);
+  SpreadsheetApp.getActive().toast(msg, 'Готово', 5);
 }
 
 
@@ -410,20 +405,30 @@ function runTransfer() {
     if (pastIdx.length === 0 && futureIdx.length === 0) return;
 
     if (pastIdx.length > 0) {
-      // Автоматически переводим даты прошлых месяцев на текущий месяц (без подтверждения)
-      for (const i of pastIdx) {
-        const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
-        if (!d) continue;
-        inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+      const btn = confirmDialog_(
+        'Проверка дат (прошлый месяц)',
+        `Камрад, ты проводишь прошлый месяц (${pastIdx.length} строк). Так и надо?`
+      );
+      if (!btn) {
+        for (const i of pastIdx) {
+          const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
+          if (!d) continue;
+          inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+        }
       }
     }
 
     if (futureIdx.length > 0) {
-      // Автоматически переводим даты будущих месяцев на текущий месяц (без подтверждения)
-      for (const i of futureIdx) {
-        const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
-        if (!d) continue;
-        inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+      const btn = confirmDialog_(
+        'Проверка дат (будущий месяц)',
+        `Камрад, ты проводишь будущий месяц (${futureIdx.length} строк). Так и надо?`
+      );
+      if (!btn) {
+        for (const i of futureIdx) {
+          const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
+          if (!d) continue;
+          inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+        }
       }
     }
 
@@ -624,9 +629,14 @@ function runTransfer() {
       alreadyInRun;
 
     if (isDuplicate) {
-      // Дубликат — пропускаем без подтверждения, фиксируем для отчёта
-      dupDecl.push(`${article} ${decoding || ''}`);
-      continue;
+      const resp = confirmDialog_(
+        'Дубль',
+        `Такая проводка уже есть:\n${fmtDate(date, tz)} | ${article} | ${decoding} | ${amount}\nВнести повторно?`
+      );
+      if (!resp) {
+        dupDecl.push(`${article} ${decoding || ''}`);
+        continue;
+      }
     }
     done.add(key);
 
@@ -691,9 +701,14 @@ function runTransfer() {
       const alreadyFlag = isMaster ? res.master : res.ret;
 
       if (alreadyFlag) {
-        // Если по акту уже была операция — пропускаем без подтверждения и фиксируем ошибку
-        err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
-        continue;
+        const ask2 = confirmDialog_(
+          'Повторная операция по акту',
+          'Камрад, по этому акту уже стояла галочка выплаты. Повторить операцию?'
+        );
+        if (!ask2) {
+          err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
+          continue;
+        }
       }
 
       // ставим флаг в P или Q
