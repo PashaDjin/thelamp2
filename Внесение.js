@@ -825,7 +825,11 @@ function runTransfer(options = {}) {
       .setProperty('LAST_PROV_ROW', String(newLast));
 
     // Нативный быстрый Toast по завершению переноса
-    SpreadsheetApp.getActive().toast(`Перенесено: ${toWrite.length}`, 'Готово', 5);
+    // Показываем его только если нет ошибок и не было добавленных новых расшифровок —
+    // иначе подробный диалог будет показан ниже и не нужно дублировать сообщение.
+    if (rowErrors.length === 0 && newDecs.length === 0) {
+      SpreadsheetApp.getActive().toast(`Перенесено: ${toWrite.length}`, 'Готово', 5);
+    }
   }
 
   /* === Очистка/сохранение вводимых строк в ⏬ ВНЕСЕНИЕ ===
