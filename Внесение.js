@@ -410,30 +410,20 @@ function runTransfer() {
     if (pastIdx.length === 0 && futureIdx.length === 0) return;
 
     if (pastIdx.length > 0) {
-      const btn = confirmDialog_(
-        'Проверка дат (прошлый месяц)',
-        `Камрад, ты проводишь прошлый месяц (${pastIdx.length} строк). Так и надо?`
-      );
-      if (!btn) {
-        for (const i of pastIdx) {
-          const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
-          if (!d) continue;
-          inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
-        }
+      // Автоматически переводим даты прошлых месяцев на текущий месяц (без подтверждения)
+      for (const i of pastIdx) {
+        const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
+        if (!d) continue;
+        inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
       }
     }
 
     if (futureIdx.length > 0) {
-      const btn = confirmDialog_(
-        'Проверка дат (будущий месяц)',
-        `Камрад, ты проводишь будущий месяц (${futureIdx.length} строк). Так и надо?`
-      );
-      if (!btn) {
-        for (const i of futureIdx) {
-          const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
-          if (!d) continue;
-          inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
-        }
+      // Автоматически переводим даты будущих месяцев на текущий месяц (без подтверждения)
+      for (const i of futureIdx) {
+        const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
+        if (!d) continue;
+        inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
       }
     }
 
@@ -601,15 +591,10 @@ function runTransfer() {
 
     // Если дата пустая — предлагаем подставить сегодняшнюю
     if (!date) {
-      if (confirmDialog_('Нет даты', 'Камрад, дата не указана. Поставить сегодняшнюю и провести?')) {
-        const today = new Date();
-        date = today;
-        inVals[i][0] = date;
-      } else {
-        badDate.push(label(r, tz));
-        err(i, 'Нет даты');
-        continue;
-      }
+      // Автоматически ставим сегодняшнюю дату, чтобы не прерывать проход
+      const today = new Date();
+      date = today;
+      inVals[i][0] = date;
     }
 
     const baseArt = artE || altArt || '';
@@ -624,14 +609,8 @@ function runTransfer() {
 
     const amount = Number(sum);
     if (!isNaN(amount) && Math.abs(amount) > BIG_LIMIT) {
-      const resp = confirmDialog_(
-        'Проверка суммы',
-        `Камрад, сумма ${amount} выглядит подозрительно. Провести?`
-      );
-      if (!resp) {
-        bigDecl.push(`${article} ${decoding || ''}`);
-        continue;
-      }
+      // Большие суммы — логируем, но не останавливаем процесс (без подтверждения)
+      bigDecl.push(`${article} ${decoding || ''}`);
     }
 
     const key = `${fmtDate(date, tz)}|${article}|${decoding}|${amount}`;
@@ -645,14 +624,9 @@ function runTransfer() {
       alreadyInRun;
 
     if (isDuplicate) {
-      const resp = confirmDialog_(
-        'Дубль',
-        `Такая проводка уже есть:\n${fmtDate(date, tz)} | ${article} | ${decoding} | ${amount}\nВнести повторно?`
-      );
-      if (!resp) {
-        dupDecl.push(`${article} ${decoding || ''}`);
-        continue;
-      }
+      // Дубликат — пропускаем без подтверждения, фиксируем для отчёта
+      dupDecl.push(`${article} ${decoding || ''}`);
+      continue;
     }
     done.add(key);
 
@@ -717,14 +691,9 @@ function runTransfer() {
       const alreadyFlag = isMaster ? res.master : res.ret;
 
       if (alreadyFlag) {
-        const ask2 = confirmDialog_(
-          'Повторная операция по акту',
-          'Камрад, по этому акту уже стояла галочка выплаты. Повторить операцию?'
-        );
-        if (!ask2) {
-          err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
-          continue;
-        }
+        // Если по акту уже была операция — пропускаем без подтверждения и фиксируем ошибку
+        err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
+        continue;
       }
 
       // ставим флаг в P или Q
@@ -766,6 +735,9 @@ function runTransfer() {
     const newLast = start + toWrite.length - 1;
     PropertiesService.getDocumentProperties()
       .setProperty('LAST_PROV_ROW', String(newLast));
+
+    // Нативный быстрый Toast по завершению переноса
+    SpreadsheetApp.getActive().toast(`Перенесено: ${toWrite.length}`, 'Готово', 5);
   }
 
   /* === Очистка/сохранение вводимых строк в ⏬ ВНЕСЕНИЕ ===
@@ -789,16 +761,12 @@ function runTransfer() {
 
   /* === Новые расшифровки — как раньше === */
   if (toSuggest.size) {
-    const wantAdd = confirmDialog_(
-      'Новые расшифровки',
-      'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?'
-    );
-    if (wantAdd) {
-      const batchOrSingle = confirmDialog_(
-        'Режим добавления',
-        'Добавить все сразу (Да) или по одной с подтверждением (Нет)?'
-      );
-      const addAllAtOnce = batchOrSingle;
+    // Быстрая нативная проверка: спрашиваем один раз, добавляем по выбору
+    const ui = SpreadsheetApp.getUi();
+    const wantAddBtn = ui.alert('Новые расшифровки', 'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?', ui.ButtonSet.YES_NO);
+    if (wantAddBtn === ui.Button.YES) {
+      const batchBtn = ui.alert('Режим добавления', 'Добавить все сразу (Да) или по одной с подтверждением (Нет)?', ui.ButtonSet.YES_NO);
+      const addAllAtOnce = (batchBtn === ui.Button.YES);
 
       toSuggest.forEach((set, art) => {
         if (!meta.has(art)) return;
@@ -819,11 +787,8 @@ function runTransfer() {
           });
         } else {
           arr.forEach(d => {
-            const resp = confirmDialog_(
-              'Добавить в "Справочник"?',
-              `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`
-            );
-            if (resp) {
+            const resp = ui.alert('Добавить в "Справочник"?', `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`, ui.ButtonSet.YES_NO);
+            if (resp === ui.Button.YES) {
               shDict.appendRow([m.t, m.c, art, d, m.req]);
               newDecs.push(`${art} — ${d}`);
             }
