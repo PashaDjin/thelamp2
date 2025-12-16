@@ -29,6 +29,93 @@ const WALLET_COLORS = {
   'ИП Паши':      '#D9D9D9'
 };
 
+/**
+ * Показывает HTML-диалог и блокирующе ждёт ответа (до таймаута).
+ * @param {Object} options
+ * @param {string} options.title
+ * @param {string} options.message
+ * @param {string[]} options.buttons
+ * @param {boolean} [options.withInput]
+ * @param {string} [options.defaultValue]
+ * @returns {{button: string, value: string}|null}
+ */
+function showDialogAndWait_({ title, message, buttons, withInput = false, defaultValue = '' }) {
+  const props = PropertiesService.getDocumentProperties();
+  const token = `dlg_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  props.deleteProperty(token);
+
+  const html = HtmlService.createHtmlOutput(`
+    <div style="font-family:Arial,sans-serif;white-space:pre-wrap;">
+      ${escapeHtml_(message)}
+    </div>
+    ${withInput ? `
+      <div style="margin-top:12px;">
+        <input id="dlg-input" style="width:100%;box-sizing:border-box;padding:6px;" value="${escapeHtml_(defaultValue)}" />
+      </div>
+    ` : ''}
+    <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+      ${buttons.map(b => `<button onclick="submitDialog('${b}')" style="padding:6px 12px;">${escapeHtml_(b)}</button>`).join('')}
+    </div>
+    <script>
+      function submitDialog(btn){
+        const v = document.getElementById('dlg-input') ? document.getElementById('dlg-input').value : '';
+        google.script.run.withSuccessHandler(function(){ google.script.host.close(); })
+          .setDialogResult('${token}', { button: btn, value: v });
+      }
+    </script>
+  `)
+    .setWidth(420)
+    .setHeight(withInput ? 240 : 200);
+
+  SpreadsheetApp.getUi().showModalDialog(html, title);
+
+  const timeoutMs = 20000;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const data = props.getProperty(token);
+    if (data) {
+      props.deleteProperty(token);
+      try {
+        return JSON.parse(data);
+      } catch (e) {
+        return null;
+      }
+    }
+    Utilities.sleep(100);
+  }
+
+  props.deleteProperty(token);
+  return null;
+}
+
+function escapeHtml_(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function setDialogResult(token, data) {
+  PropertiesService.getDocumentProperties().setProperty(token, JSON.stringify(data || {}));
+}
+
+function confirmDialog_(title, message) {
+  const res = showDialogAndWait_({ title, message, buttons: ['Да', 'Нет'] });
+  return !!(res && res.button === 'Да');
+}
+
+function okDialog_(title, message) {
+  showDialogAndWait_({ title, message, buttons: ['Ок'] });
+}
+
+function promptDialog_(title, message, defaultValue) {
+  const res = showDialogAndWait_({ title, message, buttons: ['Ок', 'Отмена'], withInput: true, defaultValue });
+  if (!res || res.button !== 'Ок') return { button: 'Cancel', text: '' };
+  return { button: 'Ok', text: res.value };
+}
+
 // Унифицированный ключ акта по адресу и номеру
 function makeActKey(addr, actNo) {
   const a = String(addr || '').trim();
@@ -57,26 +144,25 @@ function createRevenueFromActs() {
  */
 function createEntriesFromSelectedActs_({ mode }) {
   const ss   = SpreadsheetApp.getActive();
-  const ui   = SpreadsheetApp.getUi();
   const shActs = ss.getSheetByName('РЕЕСТР АКТОВ');
   const shIn   = ss.getSheetByName('⏬ ВНЕСЕНИЕ');
 
   if (!shActs || !shIn) {
-    ui.alert('Камрад, не нахожу листы "РЕЕСТР АКТОВ" и/или "⏬ ВНЕСЕНИЕ".');
+    okDialog_('Нет листов', 'Камрад, не нахожу листы "РЕЕСТР АКТОВ" и/или "⏬ ВНЕСЕНИЕ".');
     return;
   }
 
   // Требуем, чтобы пользователь был на листе "РЕЕСТР АКТОВ"
   const activeSheet = ss.getActiveSheet();
   if (!activeSheet || activeSheet.getName() !== shActs.getName()) {
-    ui.alert('Камрад, сначала перейди на лист "РЕЕСТР АКТОВ" и выдели строки с актами.');
+    okDialog_('Не тот лист', 'Камрад, сначала перейди на лист "РЕЕСТР АКТОВ" и выдели строки с актами.');
     return;
   }
 
   const selection = ss.getSelection();
   const rangeList = selection && selection.getActiveRangeList();
   if (!rangeList) {
-    ui.alert('Камрад, выдели хотя бы одну ячейку с актом в "РЕЕСТР АКТОВ".');
+    okDialog_('Нет выделения', 'Камрад, выдели хотя бы одну ячейку с актом в "РЕЕСТР АКТОВ".');
     return;
   }
 
@@ -93,7 +179,7 @@ function createEntriesFromSelectedActs_({ mode }) {
 
   const rows = Array.from(rowSet).sort((a, b) => a - b);
   if (!rows.length) {
-    ui.alert('Камрад, по выделению не нашёл ни одной строки с актами.');
+    okDialog_('Пусто', 'Камрад, по выделению не нашёл ни одной строки с актами.');
     return;
   }
 
@@ -127,7 +213,7 @@ function createEntriesFromSelectedActs_({ mode }) {
   });
 
   if (!items.length) {
-    ui.alert('Камрад, по выбранным строкам нечего проводить (пустые адреса/акты/суммы).');
+    okDialog_('Пусто', 'Камрад, по выбранным строкам нечего проводить (пустые адреса/акты/суммы).');
     return;
   }
 
@@ -142,17 +228,13 @@ function createEntriesFromSelectedActs_({ mode }) {
           : 'Провести операции по актам';
 
   const lines = items.map(it => `• ${it.addr} — ${it.amount} (${it.actNo})`);
-  const resp = ui.alert(
-    title,
-    `Камрад, оформить проводки по объектам:\n\n${lines.join('\n')}\n\nПродолжаем?`,
-    ui.ButtonSet.YES_NO
-  );
-  if (resp !== ui.Button.YES) return;
+  const ok = confirmDialog_(title, `Камрад, оформить проводки по объектам:\n\n${lines.join('\n')}\n\nПродолжаем?`);
+  if (!ok) return;
 
   // Ищем первую пустую строку во "⏬ ВНЕСЕНИЕ" в блоке B10:G40
   const firstRow = findFirstEmptyRowInInput_(shIn);
   if (!firstRow) {
-    ui.alert('Камрад, во "⏬ ВНЕСЕНИЕ" нет свободных строк в диапазоне B10:G40.');
+    okDialog_('Нет места', 'Камрад, во "⏬ ВНЕСЕНИЕ" нет свободных строк в диапазоне B10:G40.');
     return;
   }
 
@@ -160,7 +242,7 @@ function createEntriesFromSelectedActs_({ mode }) {
   const rowsPerItem = (mode === 'REVENUE') ? 2 : 1;
   const lastRowNeeded = firstRow + rowsPerItem * items.length - 1;
   if (lastRowNeeded > 40) {
-    ui.alert('Камрад, не хватает свободных строк во "⏬ ВНЕСЕНИЕ" для всех проводок. Освободи место и попробуй ещё раз.');
+    okDialog_('Нет места', 'Камрад, не хватает свободных строк во "⏬ ВНЕСЕНИЕ" для всех проводок. Освободи место и попробуй ещё раз.');
     return;
   }
 
@@ -228,7 +310,7 @@ function createEntriesFromSelectedActs_({ mode }) {
       errors.slice(0, 5).map(e => '• ' + e).join('\n');
   }
 
-  ui.alert('Готово', msg, ui.ButtonSet.OK);
+  okDialog_('Готово', msg);
 }
 
 
@@ -283,7 +365,6 @@ function runTransfer() {
   const shProv= ss.getSheetByName('☑️ ПРОВОДКИ');
   const shDict= ss.getSheetByName('Справочник');
   const shActs= ss.getSheetByName('РЕЕСТР АКТОВ');
-  const ui    = SpreadsheetApp.getUi();
   const tz    = Session.getScriptTimeZone();
   const BIG_LIMIT = 1e6;
 
@@ -323,12 +404,11 @@ function runTransfer() {
     if (pastIdx.length === 0 && futureIdx.length === 0) return;
 
     if (pastIdx.length > 0) {
-      const btn = ui.alert(
+      const btn = confirmDialog_(
         'Проверка дат (прошлый месяц)',
-        `Камрад, ты проводишь прошлый месяц (${pastIdx.length} строк). Так и надо?`,
-        ui.ButtonSet.YES_NO
+        `Камрад, ты проводишь прошлый месяц (${pastIdx.length} строк). Так и надо?`
       );
-      if (btn === ui.Button.NO) {
+      if (!btn) {
         for (const i of pastIdx) {
           const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
           if (!d) continue;
@@ -338,12 +418,11 @@ function runTransfer() {
     }
 
     if (futureIdx.length > 0) {
-      const btn = ui.alert(
+      const btn = confirmDialog_(
         'Проверка дат (будущий месяц)',
-        `Камрад, ты проводишь будущий месяц (${futureIdx.length} строк). Так и надо?`,
-        ui.ButtonSet.YES_NO
+        `Камрад, ты проводишь будущий месяц (${futureIdx.length} строк). Так и надо?`
       );
-      if (btn === ui.Button.NO) {
+      if (!btn) {
         for (const i of futureIdx) {
           const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
           if (!d) continue;
@@ -516,12 +595,7 @@ function runTransfer() {
 
     // Если дата пустая — предлагаем подставить сегодняшнюю
     if (!date) {
-      const resp = ui.alert(
-        'Нет даты',
-        'Камрад, дата не указана. Поставить сегодняшнюю и провести?',
-        ui.ButtonSet.YES_NO
-      );
-      if (resp === ui.Button.YES) {
+      if (confirmDialog_('Нет даты', 'Камрад, дата не указана. Поставить сегодняшнюю и провести?')) {
         const today = new Date();
         date = today;
         inVals[i][0] = date;
@@ -544,12 +618,11 @@ function runTransfer() {
 
     const amount = Number(sum);
     if (!isNaN(amount) && Math.abs(amount) > BIG_LIMIT) {
-      const resp = ui.alert(
+      const resp = confirmDialog_(
         'Проверка суммы',
-        `Камрад, сумма ${amount} выглядит подозрительно. Провести?`,
-        ui.ButtonSet.YES_NO
+        `Камрад, сумма ${amount} выглядит подозрительно. Провести?`
       );
-      if (resp === ui.Button.NO) {
+      if (!resp) {
         bigDecl.push(`${article} ${decoding || ''}`);
         continue;
       }
@@ -566,12 +639,11 @@ function runTransfer() {
       alreadyInRun;
 
     if (isDuplicate) {
-      const resp = ui.alert(
+      const resp = confirmDialog_(
         'Дубль',
-        `Такая проводка уже есть:\n${fmtDate(date, tz)} | ${article} | ${decoding} | ${amount}\nВнести повторно?`,
-        ui.ButtonSet.YES_NO
+        `Такая проводка уже есть:\n${fmtDate(date, tz)} | ${article} | ${decoding} | ${amount}\nВнести повторно?`
       );
-      if (resp === ui.Button.NO) {
+      if (!resp) {
         dupDecl.push(`${article} ${decoding || ''}`);
         continue;
       }
@@ -639,12 +711,11 @@ function runTransfer() {
       const alreadyFlag = isMaster ? res.master : res.ret;
 
       if (alreadyFlag) {
-        const ask2 = ui.alert(
+        const ask2 = confirmDialog_(
           'Повторная операция по акту',
-          'Камрад, по этому акту уже стояла галочка выплаты. Повторить операцию?',
-          ui.ButtonSet.YES_NO
+          'Камрад, по этому акту уже стояла галочка выплаты. Повторить операцию?'
         );
-        if (ask2 === ui.Button.NO) {
+        if (!ask2) {
           err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
           continue;
         }
@@ -712,18 +783,16 @@ function runTransfer() {
 
   /* === Новые расшифровки — как раньше === */
   if (toSuggest.size) {
-    const wantAdd = ui.alert(
+    const wantAdd = confirmDialog_(
       'Новые расшифровки',
-      'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?',
-      ui.ButtonSet.YES_NO
+      'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?'
     );
-    if (wantAdd === ui.Button.YES) {
-      const batchOrSingle = ui.alert(
+    if (wantAdd) {
+      const batchOrSingle = confirmDialog_(
         'Режим добавления',
-        'Добавить все сразу (Да) или по одной с подтверждением (Нет)?',
-        ui.ButtonSet.YES_NO
+        'Добавить все сразу (Да) или по одной с подтверждением (Нет)?'
       );
-      const addAllAtOnce = (batchOrSingle === ui.Button.YES);
+      const addAllAtOnce = batchOrSingle;
 
       toSuggest.forEach((set, art) => {
         if (!meta.has(art)) return;
@@ -744,12 +813,11 @@ function runTransfer() {
           });
         } else {
           arr.forEach(d => {
-            const resp = ui.alert(
+            const resp = confirmDialog_(
               'Добавить в "Справочник"?',
-              `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`,
-              ui.ButtonSet.YES_NO
+              `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`
             );
-            if (resp === ui.Button.YES) {
+            if (resp) {
               shDict.appendRow([m.t, m.c, art, d, m.req]);
               newDecs.push(`${art} — ${d}`);
             }
@@ -812,7 +880,7 @@ function runTransfer() {
     }
   }
 
-  ui.alert('Готово', lines.join('\n'), ui.ButtonSet.OK);
+  okDialog_('Готово', lines.join('\n'));
 }
 
 /* === Coloring === */
@@ -1003,23 +1071,19 @@ function pickArticleInteractive_(ui, meta, hashes, dictSheet, byDec, decoding) {
     .concat(articles.map((a, i) => `${i+1}. ${a}`))
     .join('\n');
 
-  const resp = ui.prompt(
-    'К какой статье отнесём эту проводку?',
-    `Расшифровка: ${String(decoding)}\n\nВведи номер:\n\n${lines}`,
-    ui.ButtonSet.OK_CANCEL
-  );
-  if (resp.getSelectedButton() !== ui.Button.OK) return null;
+  const respData = promptDialog_('К какой статье отнесём эту проводку?', `Расшифровка: ${String(decoding)}\n\nВведи номер:\n\n${lines}`, '');
+  if (respData.button !== 'Ok') return null;
 
-  const n = Number(String(resp.getResponseText()).trim());
+  const n = Number(String(respData.text).trim());
   if (Number.isInteger(n) && n >= 1 && n <= articles.length) {
     return { article: articles[n-1], created: false };
   }
   if (n !== 0) return null; // не 0 и не валидный номер → выходим
 
   // Создание новой статьи
-  const nameResp = ui.prompt('Создание статьи', 'Введи название статьи:', ui.ButtonSet.OK_CANCEL);
-  if (nameResp.getSelectedButton() !== ui.Button.OK) return null;
-  const newArticle = String(nameResp.getResponseText()).trim();
+  const nameResp = promptDialog_('Создание статьи', 'Введи название статьи:', '');
+  if (nameResp.button !== 'Ok') return null;
+  const newArticle = String(nameResp.text).trim();
   if (!newArticle) return null;
   if (meta.has(newArticle)) return { article: newArticle, created: false };
 
@@ -1029,14 +1093,14 @@ function pickArticleInteractive_(ui, meta, hashes, dictSheet, byDec, decoding) {
 
   function chooseFromList_(title, items) {
     const menu = ['0. [Ввести вручную]'].concat(items.map((v,i)=>`${i+1}. ${v}`)).join('\n');
-    const r = ui.prompt(title, `Выбери номер:\n\n${menu}`, ui.ButtonSet.OK_CANCEL);
-    if (r.getSelectedButton() !== ui.Button.OK) return null;
-    const k = Number(String(r.getResponseText()).trim());
+    const r = promptDialog_(title, `Выбери номер:\n\n${menu}`, '');
+    if (r.button !== 'Ok') return null;
+    const k = Number(String(r.text).trim());
     if (Number.isInteger(k) && k>=1 && k<=items.length) return items[k-1];
     if (k === 0) {
-      const r2 = ui.prompt(title, 'Введи значение:', ui.ButtonSet.OK_CANCEL);
-      if (r2.getSelectedButton() !== ui.Button.OK) return null;
-      const v = String(r2.getResponseText()).trim();
+      const r2 = promptDialog_(title, 'Введи значение:', '');
+      if (r2.button !== 'Ok') return null;
+      const v = String(r2.text).trim();
       return v || null;
     }
     return null;
@@ -1045,7 +1109,7 @@ function pickArticleInteractive_(ui, meta, hashes, dictSheet, byDec, decoding) {
   const t = chooseFromList_('Выбор типа', types);     if (t == null) return null;
   const c = chooseFromList_('Выбор категории', cats); if (c == null) return null;
 
-  const needAct = ui.alert('Требуется акт?', 'Для этой статьи нужен акт?', ui.ButtonSet.YES_NO) === ui.Button.YES;
+  const needAct = confirmDialog_('Требуется акт?', 'Для этой статьи нужен акт?');
   const req = needAct ? 'акт' : '';
 
   // Запишем новую статью и текущую расшифровку в «Справочник»
