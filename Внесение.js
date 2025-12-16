@@ -824,32 +824,60 @@ function runTransfer(options = {}) {
     PropertiesService.getDocumentProperties()
       .setProperty('LAST_PROV_ROW', String(newLast));
 
-    // Нативный быстрый Toast по завершению переноса
-    // Показываем его только если нет ошибок и не было добавленных новых расшифровок —
-    // иначе подробный диалог будет показан ниже и не нужно дублировать сообщение.
-    if (rowErrors.length === 0 && newDecs.length === 0) {
-      SpreadsheetApp.getActive().toast(`Перенесено: ${toWrite.length}`, 'Готово', 5);
-    }
+    // Нативный быстрый Toast больше не показываем здесь — единый итоговый toast будет в конце
   }
 
   /* === Очистка/сохранение вводимых строк в ⏬ ВНЕСЕНИЕ ===
-     — Чистим весь диапазон B10:G40
-     — Возвращаем только те строки, которые НЕ были проведены
+     — Чистим диапазон B10:G40 (содержимое и форматирование) для проведённых строк
+     — Возвращаем только те строки, которые НЕ были проведены (B..G остаются)
   */
   const height = inVals.length;
   const outVals = [];
 
+  // Собираем новые значения для B..G
   for (let i = 0; i < height; i++) {
     const row = inVals[i];
     const isBlankRow = row.every(v => v == null || String(v).trim() === '');
     if (processedRows.has(i) || isBlankRow) {
-      outVals.push(['', '', '', '', '', '', '', '', '']);
+      outVals.push(['', '', '', '', '', '']);
     } else {
-      // возвращаем исходные (или уже поправленные датой) значения B..J
-      outVals.push([row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]]);
+      // возвращаем исходные (или уже поправленные датой) значения B..G
+      outVals.push([row[0], row[1], row[2], row[3], row[4], row[5]]);
     }
   }
-  shIn.getRange(10, 2, height, 9).setValues(outVals);
+  // Записываем B..G
+  shIn.getRange(IN_START_ROW, IN_COL_B, height, 6).setValues(outVals);
+
+  // Очищаем форматирование/заметки в B..G только для проведённых строк (batch по блокам)
+  if (processedRows.size) {
+    let blockStart = null;
+    let blockLen = 0;
+
+    for (let i = 0; i < height; i++) {
+      const idx = i;
+      const isProc = processedRows.has(i);
+      if (isProc) {
+        if (blockStart === null) {
+          blockStart = idx;
+          blockLen = 1;
+        } else {
+          blockLen++;
+        }
+      } else {
+        if (blockStart !== null) {
+          const rStart = IN_START_ROW + blockStart;
+          shIn.getRange(rStart, IN_COL_B, blockLen, 6).clearFormat().clearNote();
+          blockStart = null;
+          blockLen = 0;
+        }
+      }
+    }
+    // закрываем последний блок
+    if (blockStart !== null) {
+      const rStart = IN_START_ROW + blockStart;
+      shIn.getRange(rStart, IN_COL_B, blockLen, 6).clearFormat().clearNote();
+    }
+  }
 
   /* === Новые расшифровки — как раньше === */
   if (toSuggest.size) {
@@ -963,13 +991,18 @@ function runTransfer(options = {}) {
     }
   }
 
-  if (rowErrors.length > 0 || newDecs.length > 0) {
-    // Если есть проблемы или добавленные расшифровки — покажем подробный диалог
-    okDialog_('Готово', lines.join('\n'));
-  } else {
-    // Иначе — только быстрый Toast (чтобы не дублировать сообщение)
-    SpreadsheetApp.getActive().toast(lines[0], 'Готово', 5);
-  }
+  // Всегда показываем краткий toast с итогами; подробный отчёт логируем в консоль.
+  const summaryParts = [`Перенесено: ${toWrite.length}`];
+  if (rowErrors.length) summaryParts.push(`Не проведено: ${rowErrors.length}`);
+  if (newDecs.length)    summaryParts.push(`Добавлено расшифровок: ${newDecs.length}`);
+  const summary = summaryParts.join('. ');
+  SpreadsheetApp.getActive().toast(summary, 'Готово', 8);
+
+  // Логируем подробности для отладки (можно перенести в отдельный лист при необходимости)
+  console.info(lines.join('\n'));
+
+  // Если были новые расшифровки — покажем интерактивный диалог добавления (как и раньше)
+  // (оставляем существующую логику выше, она уже обработана до этого шага).
 }
 
 /* === Coloring === */
