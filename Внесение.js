@@ -311,6 +311,15 @@ function createEntriesFromSelectedActs_({ mode }) {
   }
 
   SpreadsheetApp.getActive().toast(msg, 'Готово', 5);
+
+  // После создания проводок — автоматически запустить их проведение в режиме auto
+  try {
+    runTransfer({ auto: true });
+  } catch (e) {
+    // Если что-то пошло не так — покажем сообщение, но не будем мешать пользователю
+    console.error('Авто-проведение не удалось:', e);
+    okDialog_('Ошибка при проведении', 'Камрад, произошла ошибка при автоматическом проведении: ' + String(e));
+  }
 }
 
 
@@ -359,7 +368,8 @@ function findStartRowForProv_(shProv) {
 }
 
 //******************RUN TRANSFER************* */
-function runTransfer() {
+function runTransfer(options = {}) {
+  const auto = !!options.auto;
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
   const shIn  = ss.getSheetByName('⏬ ВНЕСЕНИЕ');
   const shProv= ss.getSheetByName('☑️ ПРОВОДКИ');
@@ -404,29 +414,33 @@ function runTransfer() {
     if (pastIdx.length === 0 && futureIdx.length === 0) return;
 
     if (pastIdx.length > 0) {
-      const btn = confirmDialog_(
-        'Проверка дат (прошлый месяц)',
-        `Камрад, ты проводишь прошлый месяц (${pastIdx.length} строк). Так и надо?`
-      );
-      if (!btn) {
-        for (const i of pastIdx) {
-          const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
-          if (!d) continue;
-          inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+      if (!auto) {
+        const btn = confirmDialog_(
+          'Проверка дат (прошлый месяц)',
+          `Камрад, ты проводишь прошлый месяц (${pastIdx.length} строк). Так и надо?`
+        );
+        if (!btn) {
+          for (const i of pastIdx) {
+            const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
+            if (!d) continue;
+            inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+          }
         }
       }
     }
 
     if (futureIdx.length > 0) {
-      const btn = confirmDialog_(
-        'Проверка дат (будущий месяц)',
-        `Камрад, ты проводишь будущий месяц (${futureIdx.length} строк). Так и надо?`
-      );
-      if (!btn) {
-        for (const i of futureIdx) {
-          const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
-          if (!d) continue;
-          inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+      if (!auto) {
+        const btn = confirmDialog_(
+          'Проверка дат (будущий месяц)',
+          `Камрад, ты проводишь будущий месяц (${futureIdx.length} строк). Так и надо?`
+        );
+        if (!btn) {
+          for (const i of futureIdx) {
+            const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
+            if (!d) continue;
+            inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+          }
         }
       }
     }
@@ -628,6 +642,10 @@ function runTransfer() {
       alreadyInRun;
 
     if (isDuplicate) {
+      if (auto) {
+        dupDecl.push(`${article} ${decoding || ''}`);
+        continue;
+      }
       const resp = confirmDialog_(
         'Дубль',
         `Такая проводка уже есть:\n${fmtDate(date, tz)} | ${article} | ${decoding} | ${amount}\nВнести повторно?`
@@ -700,6 +718,10 @@ function runTransfer() {
       const alreadyFlag = isMaster ? res.master : res.ret;
 
       if (alreadyFlag) {
+        if (auto) {
+          err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
+          continue;
+        }
         const ask2 = confirmDialog_(
           'Повторная операция по акту',
           'Камрад, по этому акту уже стояла галочка выплаты. Повторить операцию?'
