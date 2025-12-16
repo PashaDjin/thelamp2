@@ -663,20 +663,34 @@ function runTransfer(options = {}) {
       inVals[i][0] = date;
     }
 
+    // Валидации, которые должны блокировать проведение
+    // 1) Кошелёк (C) — обязателен
+    if (!wallet || String(wallet).trim() === '') {
+      err(i, 'нет кошелька (C)');
+      continue;
+    }
+
+    // 2) Сумма (D) — обязателен и не равен 0
+    const amount = Number(sum);
+    if (sum === '' || sum == null || !isFinite(amount) || amount === 0) {
+      err(i, 'нет суммы или она равна 0 (D)');
+      continue;
+    }
+
+    if (!isNaN(amount) && Math.abs(amount) > BIG_LIMIT) {
+      // Большие суммы — логируем, но не останавливаем процесс (без подтверждения)
+      bigDecl.push(`${article || ''} ${decoding || ''}`);
+    }
+
     const baseArt = artE || altArt || '';
     let article  = baseArt;
     let decoding = dec;
 
+    // 3) Для статей, которые требуют акт — проверяем наличие акта. (существующая логика)
     if (acts.get(article) && !act) {
       badAct.push(`${article} ${decoding || ''}`);
       err(i, `Камрад, для статьи "${article}" нужен акт`);
       continue;
-    }
-
-    const amount = Number(sum);
-    if (!isNaN(amount) && Math.abs(amount) > BIG_LIMIT) {
-      // Большие суммы — логируем, но не останавливаем процесс (без подтверждения)
-      bigDecl.push(`${article} ${decoding || ''}`);
     }
 
     const key = `${fmtDate(date, tz)}|${article}|${decoding}|${amount}`;
