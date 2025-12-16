@@ -637,13 +637,11 @@ function runTransfer(options = {}) {
   const processedRows = new Set();    // индексы строк ⏬ ВНЕСЕНИЕ, которые успешно проведены
 
   /* === Основной цикл по строкам ⏬ ВНЕСЕНИЕ === */
-  for (let i = 0; i < inVals.length; i++) {
+
+  // Вспомогательная функция: обрабатывает одну строку по индексу i
+  function processRow(i) {
     const r = inVals[i];
     let [date, wallet, sum, artE, dec, act, altArt, cat, type, hint, foreman] = r;
-
-    // пустая строка — пропускаем и чистим потом
-    const isBlankRow = r.every(v => v == null || String(v).trim() === '');
-    if (isBlankRow) continue;
 
     const hasType    = String(type || '').trim() !== '';
     const hasCat     = String(cat  || '').trim() !== '';
@@ -651,33 +649,29 @@ function runTransfer(options = {}) {
 
     if (!hasType || !hasCat || !hasArtEorH) {
       err(i, 'нет типа (J) или категории (I) или статьи (E/H)');
-      continue;
+      return;
     }
 
-    // Если дата пустая — предлагаем подставить сегодняшнюю
+    // Если дата пустая — подставляем сегодняшнюю
     if (!date) {
-      // Автоматически ставим сегодняшнюю дату, чтобы не прерывать проход
       const today = new Date();
       date = today;
       inVals[i][0] = date;
     }
 
-    // Валидации, которые должны блокировать проведение
-    // 1) Кошелёк (C) — обязателен
+    // Валидации: кошелёк и сумма
     if (!wallet || String(wallet).trim() === '') {
       err(i, 'нет кошелька (C)');
-      continue;
+      return;
     }
 
-    // 2) Сумма (D) — обязателен и не равен 0
     const amount = Number(sum);
     if (sum === '' || sum == null || !isFinite(amount) || amount === 0) {
       err(i, 'нет суммы или она равна 0 (D)');
-      continue;
+      return;
     }
 
     if (!isNaN(amount) && Math.abs(amount) > BIG_LIMIT) {
-      // Большие суммы — логируем, но не останавливаем процесс (без подтверждения)
       bigDecl.push(`${article || ''} ${decoding || ''}`);
     }
 
@@ -685,11 +679,11 @@ function runTransfer(options = {}) {
     let article  = baseArt;
     let decoding = dec;
 
-    // 3) Для статей, которые требуют акт — проверяем наличие акта. (существующая логика)
+    // Для статей, которые требуют акт — проверяем наличие акта
     if (acts.get(article) && !act) {
       badAct.push(`${article} ${decoding || ''}`);
       err(i, `Камрад, для статьи "${article}" нужен акт`);
-      continue;
+      return;
     }
 
     const key = `${fmtDate(date, tz)}|${article}|${decoding}|${amount}`;
@@ -698,14 +692,12 @@ function runTransfer(options = {}) {
     const alreadyInProv = existing.has(key);
     const alreadyInRun  = done.has(key);
 
-    const isDuplicate =
-      (!isMasterOrRetention && alreadyInProv) ||
-      alreadyInRun;
+    const isDuplicate = (!isMasterOrRetention && alreadyInProv) || alreadyInRun;
 
     if (isDuplicate) {
       if (auto) {
         dupDecl.push(`${article} ${decoding || ''}`);
-        continue;
+        return;
       }
       const resp = confirmDialog_(
         'Дубль',
@@ -713,14 +705,14 @@ function runTransfer(options = {}) {
       );
       if (!resp) {
         dupDecl.push(`${article} ${decoding || ''}`);
-        continue;
+        return;
       }
     }
     done.add(key);
 
     if (hashes.has(article) && !decoding) {
       noDec.push(`${article}`);
-      continue;
+      return;
     }
 
     const pairKey = article + '|' + decoding;
@@ -735,7 +727,7 @@ function runTransfer(options = {}) {
       }
     }
 
-    // Выручка по акту → подсветка E в реестре
+    // Выручка по акту → собираем цвет подсветки
     if (article === 'Выручка по акту') {
       const actKey = makeActKey(decoding, act);
       const rowActs = actKey ? keyToRow[actKey] : null;
@@ -752,15 +744,15 @@ function runTransfer(options = {}) {
     if (isMaster || isRetention) {
       if (!shActs || !actsGrid) {
         err(i, 'РЕЕСТР АКТОВ не найден или пуст, не могу привязать выплату к акту');
-        continue;
+        return;
       }
       if (!decoding || String(decoding).trim() === '') {
         err(i, 'Для "% Мастер"/"Возврат удержания" в F должен быть адрес (как в РЕЕСТР АКТОВ!B)');
-        continue;
+        return;
       }
       if (!act || String(act).trim() === '' || String(act).indexOf('АКТ') === -1) {
         err(i, 'В G должен быть номер акта со словом "АКТ" (как в РЕЕСТР АКТОВ!C)');
-        continue;
+        return;
       }
 
       const actKey = makeActKey(decoding, act);
@@ -772,7 +764,7 @@ function runTransfer(options = {}) {
         } else {
           err(i, 'РЕЕСТР АКТОВ не готов (нет данных)');
         }
-        continue;
+        return;
       }
 
       const targetCol   = isMaster ? ACTS_COL.MASTER_FLAG : ACTS_COL.RET_FLAG;
@@ -781,7 +773,7 @@ function runTransfer(options = {}) {
       if (alreadyFlag) {
         if (auto) {
           err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
-          continue;
+          return;
         }
         const ask2 = confirmDialog_(
           'Повторная операция по акту',
@@ -789,11 +781,10 @@ function runTransfer(options = {}) {
         );
         if (!ask2) {
           err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
-          continue;
+          return;
         }
       }
 
-      // помечаем флаг в local actsGrid и отложенно запишем батчем в shActs
       actsGrid[res.gridIndex][targetCol - 1] = true;
       if (isMaster) masterFlagRows.add(res.row);
       else          depFlagRows.add(res.row);
@@ -805,7 +796,7 @@ function runTransfer(options = {}) {
     );
     if (required && error) {
       err(i, error);
-      continue;
+      return;
     }
 
     // исходная строка
@@ -816,6 +807,14 @@ function runTransfer(options = {}) {
     if (extraRow) {
       toWrite.push(extraRow);
     }
+  }
+
+  // Прогоним обработчик по всем строкам
+  for (let i = 0; i < inVals.length; i++) {
+    const r = inVals[i];
+    const isBlankRow = r.every(v => v == null || String(v).trim() === '');
+    if (isBlankRow) continue;
+    processRow(i);
   }
 
   /* === Запись в ☑️ ПРОВОДКИ === */
