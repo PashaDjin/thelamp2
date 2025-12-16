@@ -231,11 +231,11 @@ function createEntriesFromSelectedActs_({ mode }) {
   // Автоматически оформляем проводки по выбранным актам (без HTML-подтверждения).
   const lines = items.map(it => `• ${it.addr} — ${it.amount} (${it.actNo})`);
 
-  // Ищем первую пустую строку во "⏬ ВНЕСЕНИЕ" в блоке B10:G40
+  // Ищем первую пустую строку во "⏬ ВНЕСЕНИЕ" в блоке B10:F40 (учитываем только B..F)
   const firstRow = findFirstEmptyRowInInput_(shIn);
   if (!firstRow) {
-    // Диагностика: выясним, какие именно строки/ячейки заняты в B10:J40 — покажем короткий отчёт
-    const diagRange = shIn.getRange(10, 2, 31, 9); // B10:J40
+    // Диагностика: выясним, какие именно строки/ячейки заняты в B10:F40 — покажем короткий отчёт
+    const diagRange = shIn.getRange(10, 2, 31, 5); // B10:F40
     const diagVals  = diagRange.getValues();
     const nonEmptyRows = [];
     for (let ri = 0; ri < diagVals.length; ri++) {
@@ -244,7 +244,7 @@ function createEntriesFromSelectedActs_({ mode }) {
       for (let ci = 0; ci < row.length; ci++) {
         const v = row[ci];
         if (v != null && String(v).trim() !== '') {
-          // колонка (B..J)
+          // колонка (B..F)
           const colNum = 2 + ci;
           const colLetter = String.fromCharCode(64 + colNum);
           let s = String(v);
@@ -256,7 +256,7 @@ function createEntriesFromSelectedActs_({ mode }) {
       if (cols.length) nonEmptyRows.push({row: 10 + ri, cols});
     }
 
-    let msg = 'Во "⏬ ВНЕСЕНИЕ" нет полностью пустых строк в диапазоне B10:J40.';
+    let msg = 'Во "⏬ ВНЕСЕНИЕ" нет полностью пустых строк в диапазоне B10:F40 (учитываются только B..F).';
     msg += '\nНайдено занятых строк: ' + nonEmptyRows.length + '.';
     if (nonEmptyRows.length) {
       msg += '\nПервые несколько (строка: столбцы=значения):\n';
@@ -1191,7 +1191,7 @@ function findFirstEmptyRowInInput_(sh) {
   const endRow   = 40;
   const height   = endRow - startRow + 1;
 
-  const range = sh.getRange(startRow, 2, height, 9); // B..J
+  const range = sh.getRange(startRow, 2, height, 5); // B..F — считаем строку занятой только по B..F
   const vals  = range.getValues();
 
   for (let i = 0; i < vals.length; i++) {
