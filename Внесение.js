@@ -866,7 +866,13 @@ function runTransfer() {
     }
   }
 
-  okDialog_('Готово', lines.join('\n'));
+  if (rowErrors.length > 0 || newDecs.length > 0) {
+    // Если есть проблемы или добавленные расшифровки — покажем подробный диалог
+    okDialog_('Готово', lines.join('\n'));
+  } else {
+    // Иначе — только быстрый Toast (чтобы не дублировать сообщение)
+    SpreadsheetApp.getActive().toast(lines[0], 'Готово', 5);
+  }
 }
 
 /* === Coloring === */
