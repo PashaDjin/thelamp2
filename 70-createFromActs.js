@@ -67,15 +67,17 @@ function createEntriesFromSelectedActs_({ mode }) {
   const errors = [];
 
   rows.forEach(row => {
-    const addr  = shActs.getRange(row, 2).getValue(); // B: адрес
-    const actNo = shActs.getRange(row, 3).getValue(); // C: номер акта
+    // Оптимизация: читаем всю строку одним вызовом
+    const rowData = shActs.getRange(row, 1, 1, 18).getValues()[0];
+    const addr  = rowData[1]; // B (index 1)
+    const actNo = rowData[2]; // C (index 2)
     const amountCol =
-      mode === 'MASTER'         ? 11 : // K — "на руки"
-      mode === 'DEPOSIT_RETURN' ? 10  : // J — возврат депозита
-      mode === 'REVENUE'        ? 5  : // E — выручка по акту
-      0;
+      mode === 'MASTER'         ? 10 : // K (index 10)
+      mode === 'DEPOSIT_RETURN' ? 9  : // J (index 9)
+      mode === 'REVENUE'        ? 4  : // E (index 4)
+      -1;
 
-    const amountCell = amountCol ? shActs.getRange(row, amountCol).getValue() : '';
+    const amountCell = amountCol >= 0 ? rowData[amountCol] : '';
     const amount = Number(amountCell);
 
     if (!addr || !actNo || amountCell === '' || amountCell == null || !isFinite(amount) || amount === 0) {
@@ -144,7 +146,7 @@ function createEntriesFromSelectedActs_({ mode }) {
 
   // Дата по Москве
   const todayStr  = Utilities.formatDate(new Date(), MOSCOW_TZ, 'dd.MM.yyyy');
-  const todayDate = parseSheetDate_(todayStr, MOSCOW_TZ);
+  const todayDate = parseSheetDate_(todayStr);
 
   const article =
     mode === 'MASTER'

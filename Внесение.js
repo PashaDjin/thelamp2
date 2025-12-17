@@ -10,89 +10,16 @@ function onOpen() {
     .addItem('Провести возврат депозитов', 'createDepositReturnFromActs')
     .addToUi();
 }
-// Константы перемещены в `00-constants.js`
-// Утилиты перемещены в `10-utils.js`
 
-
-/**
- * Показывает HTML-диалог и блокирующе ждёт ответа (до таймаута).
- * @param {Object} options
- * @param {string} options.title
- * @param {string} options.message
- * @param {string[]} options.buttons
- * @param {boolean} [options.withInput]
- * @param {string} [options.defaultValue]
- * @returns {{button: string, value: string}|null}
- */
-function showDialogAndWait_({ title, message, buttons, withInput = false, defaultValue = '' }) {
-  const cache = CacheService.getScriptCache();
-  const token = `dlg_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  cache.remove(token);
-
-  const html = HtmlService.createHtmlOutput(`
-    <div style="white-space:pre-wrap;">${escapeHtml_(message)}</div>
-    ${withInput ? `<div><input id="dlg-input" value="${escapeHtml_(defaultValue)}" /></div>` : ''}
-    <div>${buttons.map(b => `<button onclick="submitDialog('${b}')">${escapeHtml_(b)}</button>`).join('')}</div>
-    <script>
-      function submitDialog(btn){
-        const v = document.getElementById('dlg-input') ? document.getElementById('dlg-input').value : '';
-        google.script.run.withSuccessHandler(function(){ google.script.host.close(); })
-          .setDialogResult('${token}', { button: btn, value: v });
-      }
-      document.addEventListener('DOMContentLoaded', function(){
-        const b = document.querySelector('button'); if(b) b.focus();
-      });
-    </script>
-  `)
-    .setWidth(380)
-    .setHeight(withInput ? 180 : 140);
-
-  SpreadsheetApp.getUi().showModalDialog(html, title);
-
-  const timeoutMs = 20000;
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const data = cache.get(token);
-    if (data) {
-      cache.remove(token);
-      try {
-        return JSON.parse(data);
-      } catch (e) {
-        return null;
-      }
-    }
-    Utilities.sleep(30);
-  }
-
-  cache.remove(token);
-  return null;
-}
-
-// escapeHtml_ moved to `10-utils.js`
-function setDialogResult(token, data) {
-  // use cache for faster cross-process signalling
-  try {
-    CacheService.getScriptCache().put(token, JSON.stringify(data || {}), 120);
-  } catch (e) {
-    // fallback to properties if cache fails for any reason
-    PropertiesService.getDocumentProperties().setProperty(token, JSON.stringify(data || {}));
-  }
-}
-
-function confirmDialog_(title, message) {
-  const res = showDialogAndWait_({ title, message, buttons: ['Да', 'Нет'] });
-  return !!(res && res.button === 'Да');
-}
-
-function okDialog_(title, message) {
-  showDialogAndWait_({ title, message, buttons: ['Ок'] });
-}
-
-function promptDialog_(title, message, defaultValue) {
-  const res = showDialogAndWait_({ title, message, buttons: ['Ок', 'Отмена'], withInput: true, defaultValue });
-  if (!res || res.button !== 'Ок') return { button: 'Cancel', text: '' };
-  return { button: 'Ok', text: res.value };
-}
+// === Все функции перенесены в модули ===
+// Константы → 00-constants.js
+// Утилиты → 10-utils.js
+// UI-диалоги → 20-ui-dialogs.js (showDialogAndWait_, setDialogResult, confirmDialog_, okDialog_, promptDialog_)
+// Форматирование → 12-formatting.js (colorRows_, handleInternalTransfer_, pickArticleInteractive_, resolveArticleByDec_)
+// Работа с актами → 40-acts.js
+// Справочник → 50-dictionary.js
+// Валидация → 60-transfer.js
+// Создание из актов → 70-createFromActs.js
 
 // Унифицированный ключ акта по адресу и номеру
 function makeActKey(addr, actNo) {
@@ -205,7 +132,7 @@ function runTransfer(options = {}) {
       const hasAmount = amount !== '' && amount != null;
       if (!hasAmount) continue;
 
-      const d = parseSheetDate_(row[0], Session.getScriptTimeZone());
+      const d = parseSheetDate_(row[0]);
       if (!d) continue;
 
       const y = d.getFullYear();
@@ -225,7 +152,7 @@ function runTransfer(options = {}) {
         );
         if (!btn) {
           for (const i of pastIdx) {
-            const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
+            const d = parseSheetDate_(inVals[i][0]);
             if (!d) continue;
             inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
           }
@@ -241,7 +168,7 @@ function runTransfer(options = {}) {
         );
         if (!btn) {
           for (const i of futureIdx) {
-            const d = parseSheetDate_(inVals[i][0], Session.getScriptTimeZone());
+            const d = parseSheetDate_(inVals[i][0]);
             if (!d) continue;
             inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
           }

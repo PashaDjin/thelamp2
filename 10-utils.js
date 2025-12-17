@@ -10,8 +10,12 @@ function escapeHtml_(s) {
     .replace(/'/g, '&#39;');
 }
 
-/** Парсит дату из Date | числа (серийная) | строки dd.MM.yyyy. Возвращает Date или null. */
-function parseSheetDate_(v, tz) {
+/** 
+ * Парсит дату из Date | числа (серийная) | строки dd.MM.yyyy. 
+ * Возвращает Date или null.
+ * Примечание: возвращает Date в локальном timezone браузера/скрипта
+ */
+function parseSheetDate_(v) {
   if (v instanceof Date && !isNaN(v.getTime())) return v;
 
   if (typeof v === 'number' && isFinite(v)) {

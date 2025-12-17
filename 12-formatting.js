@@ -15,12 +15,8 @@ function colorRows_(sh, start, rows) {
     if (type === 'Доход') cSum = '#E6F4EA';
     if (type === 'Расход') cSum = '#FDEAEA';
     sumColors.push([cSum]);
-    let cW = null;
-    if (wallet === 'Р/С Строймат') cW = '#DDEBF7';
-    else if (wallet === 'Р/С Брендмар') cW = '#FFF2CC';
-    else if (wallet === 'Наличные') cW = '#E2EFDA';
-    else if (wallet === 'Карта') cW = '#D9F0F0';
-    else if (wallet === 'Карта Артема') cW = '#E6E0EC';
+    // Используем цвета из WALLET_COLORS константы
+    const cW = WALLET_COLORS[wallet] || null;
     walletColors.push([cW]);
   });
   sh.getRange(start, 3, n, 1).setBackgrounds(sumColors);
