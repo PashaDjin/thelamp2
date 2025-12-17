@@ -638,43 +638,24 @@ function runTransfer(options = {}) {
   // Вспомогательная функция: обрабатывает одну строку по индексу i
   function processRow(i) {
     const r = inVals[i];
-    let [date, wallet, sum, artE, dec, act, altArt, cat, type, hint, foreman] = r;
-
-    const hasType    = String(type || '').trim() !== '';
-    const hasCat     = String(cat  || '').trim() !== '';
-    const hasArtEorH = String(artE || '').trim() !== '' || String(altArt || '').trim() !== '';
-
-    if (!hasType || !hasCat || !hasArtEorH) {
-      err(i, 'нет типа (J) или категории (I) или статьи (E/H)');
+    const basic = validateRowBasic(r, i);
+    if (!basic.ok) {
+      err(i, basic.error);
       return;
     }
 
-    // Если дата пустая — подставляем сегодняшнюю
-    if (!date) {
+    let { date, wallet, amount, article, decoding, act, cat, type, hint, foreman } = basic;
+
+    // Если дата была пустой — заполняем сегодня и фиксируем в inVals
+    if (basic.wantsToday) {
       const today = new Date();
       date = today;
       inVals[i][0] = date;
     }
 
-    // Валидации: кошелёк и сумма
-    if (!wallet || String(wallet).trim() === '') {
-      err(i, 'нет кошелька (C)');
-      return;
-    }
-
-    const amount = Number(sum);
-    if (sum === '' || sum == null || !isFinite(amount) || amount === 0) {
-      err(i, 'нет суммы или она равна 0 (D)');
-      return;
-    }
-
     if (!isNaN(amount) && Math.abs(amount) > BIG_LIMIT) {
       bigDecl.push(`${article || ''} ${decoding || ''}`);
     }
-
-    const baseArt = artE || altArt || '';
-    let article  = baseArt;
-    let decoding = dec;
 
     // Для статей, которые требуют акт — проверяем наличие акта
     if (acts.get(article) && !act) {
