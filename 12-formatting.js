@@ -129,14 +129,13 @@ function pickArticleInteractive_(ui, meta, hashes, dictSheet, byDec, decoding) {
   const c = chooseFromList_('Выбор категории', cats); if (c == null) return null;
 
   const needAct = confirmDialog_('Требуется акт?', 'Для этой статьи нужен акт?');
-  const req = needAct ? 'акт' : '';
 
-  dictSheet.appendRow([t, c, newArticle, String(decoding).trim(), req]);
-
-  meta.set(newArticle, { t, c, req });
-  const kDec = String(decoding).trim();
-  if (!byDec.has(kDec)) byDec.set(kDec, new Set());
-  byDec.get(kDec).add(newArticle);
+  // Используем централизованную функцию для добавления статьи
+  const success = addArticleToDictionary_(dictSheet, newArticle, decoding, t, c, needAct, meta, byDec);
+  if (!success) {
+    okDialog_('Ошибка', 'Не удалось добавить статью в справочник');
+    return null;
+  }
 
   return { article: newArticle, created: true };
 }

@@ -184,22 +184,7 @@ function runTransfer(options = {}) {
   })();
 
   /* === Решаем, нужен ли вообще РЕЕСТР АКТОВ в этом запуске === */
-  let needActsGrid = false;
-  for (let i = 0; i < inVals.length; i++) {
-    const row = inVals[i];
-    const amount = row[2]; // D
-    const hasAmount = amount !== '' && amount != null && Number(amount) !== 0;
-    if (!hasAmount) continue;
-
-    const artE   = row[3]; // E
-    const altArt = row[6]; // H
-    const baseArt = artE || altArt || '';
-
-    if (baseArt === '% Мастер' || baseArt === 'Возврат удержания' || baseArt === 'Выручка по акту') {
-      needActsGrid = true;
-      break;
-    }
-  }
+  const needActsGrid = needsActsGrid(inVals);
 
   /* === Справочник статей === */
   const dictIdx = buildDictionaryIndex_(shDict);
@@ -210,26 +195,7 @@ function runTransfer(options = {}) {
   const byDec  = dictIdx.byDec;
 
   /* === Дубли по последним 100 строкам ПРОВОДОК (оставляем) === */
-  const existing   = new Set(); // ключ дубля
-  const lastProvRow= shProv.getLastRow();
-
-  if (lastProvRow > 1) {
-    const dupWindowSize = 100;
-    const startDupRow   = Math.max(2, lastProvRow - dupWindowSize + 1);
-    const dupHeight     = lastProvRow - startDupRow + 1;
-
-    const provDup = shProv
-      .getRange(startDupRow, 1, dupHeight, 10) // A:J
-      .getValues();
-
-    provDup.forEach(r => {
-      const [date, wallet, sum, art, dec, act] = r;
-      if (date && art && dec && sum !== '' && sum != null) {
-        const key = `${fmtDate(date, tz)}|${art}|${dec}|${Number(sum)}`;
-        existing.add(key);
-      }
-    });
-  }
+  const existing = buildExistingEntriesSet(shProv, 100, tz);
 
   /* === РЕЕСТР АКТОВ (только ключи и флаги, без сумм и остатков) === */
   let actsGrid = null;
@@ -338,37 +304,20 @@ function runTransfer(options = {}) {
     }
 
     // Логика по актам для % Мастер / Возврат удержания
-    const isMaster    = (article === '% Мастер');
+    const isMaster = (article === '% Мастер');
     const isRetention = (article === 'Возврат удержания');
 
     if (isMaster || isRetention) {
-      if (!shActs || !actsGrid) {
-        err(i, 'РЕЕСТР АКТОВ не найден или пуст, не могу привязать выплату к акту');
-        return;
-      }
-      if (!decoding || String(decoding).trim() === '') {
-        err(i, 'Для "% Мастер"/"Возврат удержания" в F должен быть адрес (как в РЕЕСТР АКТОВ!B)');
-        return;
-      }
-      if (!act || String(act).trim() === '' || String(act).indexOf('АКТ') === -1) {
-        err(i, 'В G должен быть номер акта со словом "АКТ" (как в РЕЕСТР АКТОВ!C)');
+      const actResult = processActsRelatedEntry({
+        article, decoding, act, shActs, actsGrid, keyToRow
+      });
+
+      if (!actResult.ok) {
+        err(i, actResult.error);
         return;
       }
 
-      const actKey = makeActKey(decoding, act);
-      const res    = findActRowByKey_(actsGrid, keyToRow, actKey);
-
-      if (!res.row) {
-        if (res.error === 'not_found') {
-          err(i, 'Акт не найден в РЕЕСТР АКТОВ по адресу+акту');
-        } else {
-          err(i, 'РЕЕСТР АКТОВ не готов (нет данных)');
-        }
-        return;
-      }
-
-      const targetCol   = isMaster ? ACTS_COL.MASTER_FLAG : ACTS_COL.RET_FLAG;
-      const alreadyFlag = isMaster ? res.master : res.ret;
+      const { alreadyFlag, targetCol, gridIndex, targetRow } = actResult;
 
       if (alreadyFlag) {
         if (auto) {
@@ -385,15 +334,9 @@ function runTransfer(options = {}) {
         }
       }
 
-      // Проверяем bounds для безопасного доступа к actsGrid
-      if (res.gridIndex < 0 || res.gridIndex >= actsGrid.length) {
-        err(i, `Внутренняя ошибка: некорректный индекс акта (${res.gridIndex})`);
-        return;
-      }
-
-      actsGrid[res.gridIndex][targetCol - 1] = true;
-      if (isMaster) masterFlagRows.add(res.row);
-      else          depFlagRows.add(res.row);
+      actsGrid[gridIndex][targetCol - 1] = true;
+      if (isMaster) masterFlagRows.add(targetRow);
+      else depFlagRows.add(targetRow);
     }
 
     // авто-зеркалирование переводов между кошельками
@@ -429,20 +372,12 @@ function runTransfer(options = {}) {
     if (curFilter) curFilter.remove();
 
     const start = findStartRowForProv_(shProv);
-    
-    try {
-      if (!shProv) throw new Error('Лист "☑️ ПРОВОДКИ" не найден');
-      shProv.getRange(start, 1, toWrite.length, 10).setValues(toWrite);
-      colorRows_(shProv, start, toWrite);
-    } catch (e) {
-      console.error('Ошибка записи в ПРОВОДКИ:', e);
-      okDialog_('Ошибка', `Не удалось записать проводки: ${e.message}`);
+    const writeResult = writeProvodkiToSheet(shProv, toWrite, start);
+
+    if (!writeResult.ok) {
+      okDialog_('Ошибка', writeResult.error);
       return;
     }
-
-    const newLast = start + toWrite.length - 1;
-    PropertiesService.getDocumentProperties()
-      .setProperty('LAST_PROV_ROW', String(newLast));
 
     // Нативный быстрый Toast больше не показываем здесь — единый итоговый toast будет в конце
   }
@@ -451,25 +386,7 @@ function runTransfer(options = {}) {
      — Чистим диапазон B10:G40 (содержимое и форматирование) для проведённых строк
      — Возвращаем только те строки, которые НЕ были проведены (B..G остаются)
   */
-  const height = inVals.length;
-  const outVals = [];
-
-  // Собираем новые значения для B..G
-  for (let i = 0; i < height; i++) {
-    const row = inVals[i];
-    const isBlankRow = row.every(v => v == null || String(v).trim() === '');
-    if (processedRows.has(i) || isBlankRow) {
-      outVals.push(['', '', '', '', '', '']);
-    } else {
-      // возвращаем исходные (или уже поправленные датой) значения B..G
-      outVals.push([row[0], row[1], row[2], row[3], row[4], row[5]]);
-    }
-  }
-  // Записываем B..G
-  shIn.getRange(IN_START_ROW, IN_COL_B, height, 6).setValues(outVals);
-
-  // Форматирование и заметки не трогаем — очищаем только значения (они уже записаны выше в B..G)
-  // (Оставляем форматирование и примечания на месте по просьбе пользователя.)
+  clearProcessedInputRows(shIn, inVals, processedRows);
 
   /* === Новые расшифровки === */
   const newDecs = addNewDecodings_(shDict, toSuggest, meta, auto);

@@ -104,3 +104,34 @@ function addNewDecodings_(shDict, toSuggest, meta, auto) {
 
   return newDecs;
 }
+
+/**
+ * Добавляет новую статью в справочник
+ * @param {Sheet} shDict - лист Справочник
+ * @param {String} article - название статьи
+ * @param {String} decoding - расшифровка
+ * @param {String} type - тип (Доход/Расход)
+ * @param {String} category - категория
+ * @param {Boolean} needAct - требуется ли акт
+ * @param {Map} meta - карта метаданных статей (обновляется)
+ * @param {Map} byDec - карта расшифровок (обновляется)
+ * @returns {Boolean} - успешность операции
+ */
+function addArticleToDictionary_(shDict, article, decoding, type, category, needAct, meta, byDec) {
+  const req = needAct ? 'акт' : '';
+  
+  try {
+    shDict.appendRow([type, category, article, String(decoding).trim(), req]);
+    
+    // Обновляем индексы
+    meta.set(article, { t: type, c: category, req });
+    const kDec = String(decoding).trim();
+    if (!byDec.has(kDec)) byDec.set(kDec, new Set());
+    byDec.get(kDec).add(article);
+    
+    return true;
+  } catch (e) {
+    console.error('Ошибка добавления статьи в справочник:', e);
+    return false;
+  }
+}
