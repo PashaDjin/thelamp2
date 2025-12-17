@@ -15,9 +15,9 @@ function onOpen() {
 // Константы → 00-constants.js
 // Утилиты → 10-utils.js
 // UI-диалоги → 20-ui-dialogs.js (showDialogAndWait_, setDialogResult, confirmDialog_, okDialog_, promptDialog_)
-// Форматирование → 12-formatting.js (colorRows_, handleInternalTransfer_, pickArticleInteractive_, resolveArticleByDec_)
 // Работа с актами → 40-acts.js
 // Справочник → 50-dictionary.js
+// Форматирование → 55-formatting.js (colorRows_, handleInternalTransfer_, pickArticleInteractive_, resolveArticleByDec_)
 // Валидация → 60-transfer.js
 // Создание из актов → 70-createFromActs.js
 
