@@ -54,16 +54,28 @@ function handleInternalTransfer_(row) {
     return { extraRow: null, error: null, required: false };
   }
 
-  if (!decoding || !wallets.has(decoding)) {
+  // Создаём нормализованный Set для регистронезависимой проверки
+  const walletsLowerSet = new Set(
+    Array.from(wallets).map(w => String(w).toLowerCase().trim())
+  );
+  
+  const decodingLower = String(decoding || '').toLowerCase().trim();
+  
+  if (!decoding || !walletsLowerSet.has(decodingLower)) {
     const msg = isOut
       ? 'Камрад, при "Перевод на кошелек" в расшифровке должен быть целевой кошелёк.'
       : 'Камрад, при "Пополнение кошелька" в расшифровке должен быть исходный кошелёк.';
     return { extraRow: null, error: msg, required: true };
   }
 
+  // Находим оригинальное название кошелька (с правильным регистром)
+  const mirrorWalletOriginal = Array.from(wallets).find(
+    w => String(w).toLowerCase().trim() === decodingLower
+  );
+
   const mirrorType     = isOut ? 'Доход'  : 'Расход';
   const mirrorArticle  = isOut ? 'Пополнение кошелька' : 'Перевод на кошелек';
-  const mirrorWallet   = decoding;
+  const mirrorWallet   = mirrorWalletOriginal || decoding;
   const mirrorDecoding = wallet;
 
   const extraRow = [
