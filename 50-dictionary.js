@@ -1,34 +1,82 @@
-// 50-dictionary.js — работа со справочником статей
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 50-dictionary.js — Работа со справочником статей доходов/расходов
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * Этот файл управляет справочником статей — списком всех категорий расходов
+ * и доходов компании.
+ * 
+ * Что такое статья?
+ * Это категория расхода/дохода, например:
+ * - "Зарплата" (расход)
+ * - "Выручка по акту" (доход)
+ * - "Аренда офиса" (расход)
+ * 
+ * Что такое расшифровка?
+ * Это детализация статьи, например:
+ * - Статья "Зарплата" → расшифровка "Сидорову И.И."
+ * - Статья "Выручка по акту" → расшифровка "ул.Ленина 15"
+ * 
+ * Основные задачи:
+ * - Быстрый поиск статьи по расшифровке
+ * - Автоматическое добавление новых расшифровок
+ * - Проверка наличия связки "статья + расшифровка"
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
 
 /**
  * Загружает справочник и строит индексы для быстрого поиска
- * @param {Sheet} shDict - лист "Справочник"
- * @returns {Object} { pairs, acts, hashes, meta, byDec }
+ * 
+ * Проблема: если в справочнике сотни строк, каждый раз искать перебором — медленно.
+ * 
+ * Решение: один раз прочитать весь справочник и создать несколько "карт":
+ * 1. pairs — Set пар "статья|расшифровка" (для проверки существования)
+ * 2. acts — Map статей, для которых нужен акт
+ * 3. hashes — Set "хэш-статей" (расшифровка начинается с #, например #Дюбели)
+ * 4. meta — Map статей с их типом, категорией и требованием акта
+ * 5. byDec — Map расшифровок → множество статей
+ * 
+ * Теперь все проверки мгновенные!
+ * 
+ * @param {Sheet} shDict - Лист "Справочник"
+ * @returns {Object} - Объект с индексами:
+ *   - pairs: Set пар "статья|расшифровка"
+ *   - acts: Map статей, требующих акт
+ *   - hashes: Set хэш-статей
+ *   - meta: Map статья → {t: тип, c: категория, req: требование}
+ *   - byDec: Map расшифровка → Set(статей)
  */
 function buildDictionaryIndex_(shDict) {
-  const pairs  = new Set();   // "статья|расшифровка"
-  const acts   = new Map();   // статья → нужен акт
-  const hashes = new Set();   // "хэш-статьи" — d начинается с "#"
-  const meta   = new Map();   // статья → {t,c,req}
-  const byDec  = new Map();   // расшифровка → Set(статей)
+  const pairs  = new Set();   // Пары "статья|расшифровка" для быстрой проверки
+  const acts   = new Map();   // Статьи, для которых нужен акт
+  const hashes = new Set();   // Хэш-статьи (расшифровка начинается с #)
+  const meta   = new Map();   // Метаданные: статья → {тип, категория, требование}
+  const byDec  = new Map();   // Обратный индекс: расшифровка → множество статей
 
   let dict = [];
   if (shDict && shDict.getLastRow() > 1) {
+    // Читаем весь справочник одним запросом (колонки A:E)
     dict = shDict.getRange(2, 1, shDict.getLastRow() - 1, 5).getValues();
   }
 
+  // Проходим по каждой строке справочника
   dict.forEach(r => {
-    const [t, c, a, d, req] = r;
-    if (!a) return;
+    const [t, c, a, d, req] = r; // t=тип, c=категория, a=статья, d=расшифровка, req=требование
+    if (!a) return; // Пропускаем пустые строки
 
+    // Запоминаем пару "статья|расшифровка"
     pairs.add(a + '|' + d);
 
+    // Если нужен акт — запоминаем
     if (String(req).toLowerCase() === 'акт') acts.set(a, true);
 
+    // Если расшифровка начинается с # — это хэш-статья
     if (String(d).startsWith('#')) hashes.add(a);
 
+    // Сохраняем метаданные статьи
     if (!meta.has(a)) meta.set(a, { t, c, req });
 
+    // Строим обратный индекс: расшифровка → множество статей
     if (d != null && d !== '') {
       const keyDec = String(d).trim();
       if (!byDec.has(keyDec)) byDec.set(keyDec, new Set());
@@ -40,47 +88,74 @@ function buildDictionaryIndex_(shDict) {
 }
 
 /**
- * Добавляет новые расшифровки в справочник (батчем или по одной)
- * @param {Sheet} shDict
- * @param {Map} toSuggest - статья → Set(расшифровок)
- * @param {Map} meta - статья → {t,c,req}
- * @param {boolean} auto - авто-режим (не показывать диалоги)
- * @returns {Array} newDecs - список добавленных расшифровок ["статья — расшифровка", ...]
+ * Добавляет новые расшифровки в справочник
+ * 
+ * Когда пользователь вводит расшифровку, которой нет в справочнике,
+ * система предлагает добавить её.
+ * 
+ * Два режима:
+ * 1. Батчевый — добавить все сразу без подтверждения каждой
+ * 2. Интерактивный — спросить про каждую расшифровку отдельно
+ * 
+ * @param {Sheet} shDict - Лист "Справочник"
+ * @param {Map} toSuggest - Карта: статья → Set(новых расшифровок)
+ * @param {Map} meta - Карта метаданных статей (откуда берём тип и категорию)
+ * @param {boolean} auto - Авто-режим (если true — не добавляем, работаем без диалогов)
+ * @returns {Array} - Массив добавленных расшифровок вида ["Зарплата — Иванову", ...]
  */
 function addNewDecodings_(shDict, toSuggest, meta, auto) {
   const newDecs = [];
-  if (!toSuggest || toSuggest.size === 0) return newDecs;
-  if (auto) return newDecs; // в авто-режиме не добавляем
+  if (!toSuggest || toSuggest.size === 0) return newDecs; // Нечего добавлять
+  if (auto) return newDecs; // В авто-режиме не добавляем (не показываем диалоги)
 
   const ui = SpreadsheetApp.getUi();
-  const wantAddBtn = ui.alert('Новые расшифровки', 'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?', ui.ButtonSet.YES_NO);
+  
+  // Спрашиваем: хочет ли пользователь добавить новые расшифровки?
+  const wantAddBtn = ui.alert(
+    'Новые расшифровки', 
+    'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?', 
+    ui.ButtonSet.YES_NO
+  );
   if (wantAddBtn !== ui.Button.YES) return newDecs;
 
-  const batchBtn = ui.alert('Режим добавления', 'Добавить все сразу (Да) или по одной с подтверждением (Нет)?', ui.ButtonSet.YES_NO);
+  // Спрашиваем: добавить все сразу или по одной?
+  const batchBtn = ui.alert(
+    'Режим добавления', 
+    'Добавить все сразу (Да) или по одной с подтверждением (Нет)?', 
+    ui.ButtonSet.YES_NO
+  );
   const addAllAtOnce = (batchBtn === ui.Button.YES);
 
-  const rowsToAppend = [];
+  const rowsToAppend = []; // Накопитель для батчевой записи
 
+  // Обрабатываем каждую статью с новыми расшифровками
   toSuggest.forEach((set, art) => {
-    if (!meta.has(art)) return;
-    const m = meta.get(art);
+    if (!meta.has(art)) return; // Нет метаданных — пропускаем
+    const m = meta.get(art); // Берём тип, категорию, требование акта
 
+    // Очищаем и сортируем список расшифровок
     const arr = Array.from(set)
       .map(d => (d == null ? '' : String(d).trim()))
       .filter(d => d !== '')
-      .filter((d, i, a) => a.indexOf(d) === i)
+      .filter((d, i, a) => a.indexOf(d) === i) // Убираем дубликаты
       .sort((a, b) => a.localeCompare(b, 'ru'));
 
     if (!arr.length) return;
 
     if (addAllAtOnce) {
+      // Режим "все сразу" — просто добавляем в список для записи
       arr.forEach(d => {
         rowsToAppend.push([m.t, m.c, art, d, m.req]);
         newDecs.push(`${art} — ${d}`);
       });
     } else {
+      // Режим "по одной" — спрашиваем про каждую
       arr.forEach(d => {
-        const resp = ui.alert('Добавить в "Справочник"?', `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`, ui.ButtonSet.YES_NO);
+        const resp = ui.alert(
+          'Добавить в "Справочник"?', 
+          `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`, 
+          ui.ButtonSet.YES_NO
+        );
         if (resp === ui.Button.YES) {
           shDict.appendRow([m.t, m.c, art, d, m.req]);
           newDecs.push(`${art} — ${d}`);
@@ -89,6 +164,7 @@ function addNewDecodings_(shDict, toSuggest, meta, auto) {
     }
   });
 
+  // Если есть что записывать батчем — записываем одним запросом (быстро!)
   if (rowsToAppend.length) {
     const last = shDict.getLastRow();
     const startRow = Math.max(2, last + 1);
@@ -107,23 +183,30 @@ function addNewDecodings_(shDict, toSuggest, meta, auto) {
 
 /**
  * Добавляет новую статью в справочник
- * @param {Sheet} shDict - лист Справочник
- * @param {String} article - название статьи
- * @param {String} decoding - расшифровка
- * @param {String} type - тип (Доход/Расход)
- * @param {String} category - категория
- * @param {Boolean} needAct - требуется ли акт
- * @param {Map} meta - карта метаданных статей (обновляется)
- * @param {Map} byDec - карта расшифровок (обновляется)
- * @returns {Boolean} - успешность операции
+ * 
+ * Вызывается когда пользователь создаёт совершенно новую статью
+ * (не просто расшифровку к существующей).
+ * 
+ * Одновременно обновляет индексы meta и byDec, чтобы не пересчитывать их заново.
+ * 
+ * @param {Sheet} shDict - Лист "Справочник"
+ * @param {string} article - Название статьи (например, "Новая категория расходов")
+ * @param {string} decoding - Расшифровка (например, "Первая запись")
+ * @param {string} type - Тип: "Доход" или "Расход"
+ * @param {string} category - Категория (например, "Операционные расходы")
+ * @param {boolean} needAct - Требуется ли акт для этой статьи
+ * @param {Map} meta - Карта метаданных (обновляется)
+ * @param {Map} byDec - Карта расшифровок (обновляется)
+ * @returns {boolean} - true если успешно, false при ошибке
  */
 function addArticleToDictionary_(shDict, article, decoding, type, category, needAct, meta, byDec) {
-  const req = needAct ? 'акт' : '';
+  const req = needAct ? 'акт' : ''; // Преобразуем boolean в строку "акт" или ""
   
   try {
+    // Добавляем строку в таблицу
     shDict.appendRow([type, category, article, String(decoding).trim(), req]);
     
-    // Обновляем индексы
+    // Обновляем индексы в памяти (чтобы новая статья сразу стала доступна)
     meta.set(article, { t: type, c: category, req });
     const kDec = String(decoding).trim();
     if (!byDec.has(kDec)) byDec.set(kDec, new Set());
