@@ -512,35 +512,12 @@ function runTransfer(options = {}) {
   }
 
   /* === Справочник статей === */
-  let dict = [];
-  if (shDict.getLastRow() > 1) {
-    dict = shDict.getRange(2, 1, shDict.getLastRow() - 1, 5).getValues();
-  }
-
-  const pairs  = new Set();   // "статья|расшифровка"
-  const acts   = new Map();   // статья → нужен акт
-  const hashes = new Set();   // "хэш-статьи" — d начинается с "#"
-  const meta   = new Map();   // статья → {t,c,req}
-  const byDec  = new Map();   // расшифровка → Set(статей)
-
-  dict.forEach(r => {
-    const [t, c, a, d, req] = r;
-    if (!a) return;
-
-    pairs.add(a + '|' + d);
-
-    if (String(req).toLowerCase() === 'акт') acts.set(a, true);
-
-    if (String(d).startsWith('#')) hashes.add(a);
-
-    if (!meta.has(a)) meta.set(a, { t, c, req });
-
-    if (d != null && d !== '') {
-      const keyDec = String(d).trim();
-      if (!byDec.has(keyDec)) byDec.set(keyDec, new Set());
-      byDec.get(keyDec).add(a);
-    }
-  });
+  const dictIdx = buildDictionaryIndex_(shDict);
+  const pairs  = dictIdx.pairs;
+  const acts   = dictIdx.acts;
+  const hashes = dictIdx.hashes;
+  const meta   = dictIdx.meta;
+  const byDec  = dictIdx.byDec;
 
   /* === Дубли по последним 100 строкам ПРОВОДОК (оставляем) === */
   const existing   = new Set(); // ключ дубля
@@ -579,7 +556,6 @@ function runTransfer(options = {}) {
   const done           = new Set();      // ключи проведённых в этот run
   const toSuggest      = new Map();      // статья → Set(новых расшифровок)
   const DEBUG_REPORT   = false;
-  const newDecs        = [];
 
   const badDate = [], badAct = [], bigDecl = [], dupDecl = [], noDec = [], unknown = [];
 
@@ -791,53 +767,8 @@ function runTransfer(options = {}) {
   // Форматирование и заметки не трогаем — очищаем только значения (они уже записаны выше в B..G)
   // (Оставляем форматирование и примечания на месте по просьбе пользователя.)
 
-  /* === Новые расшифровки — как раньше === */
-  if (toSuggest.size) {
-    // Быстрая нативная проверка: спрашиваем один раз, добавляем по выбору
-    const ui = SpreadsheetApp.getUi();
-    const wantAddBtn = ui.alert('Новые расшифровки', 'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?', ui.ButtonSet.YES_NO);
-    if (wantAddBtn === ui.Button.YES) {
-      const batchBtn = ui.alert('Режим добавления', 'Добавить все сразу (Да) или по одной с подтверждением (Нет)?', ui.ButtonSet.YES_NO);
-      const addAllAtOnce = (batchBtn === ui.Button.YES);
-
-      // Для режима "Добавить все сразу" собираем строки и добавляем батчем
-      const rowsToAppend = [];
-
-      toSuggest.forEach((set, art) => {
-        if (!meta.has(art)) return;
-        const m = meta.get(art);
-
-        const arr = Array.from(set)
-          .map(d => (d == null ? '' : String(d).trim()))
-          .filter(d => d !== '')
-          .filter((d, i, a) => a.indexOf(d) === i)
-          .sort((a, b) => a.localeCompare(b, 'ru'));
-
-        if (!arr.length) return;
-
-        if (addAllAtOnce) {
-          arr.forEach(d => {
-            rowsToAppend.push([m.t, m.c, art, d, m.req]);
-            newDecs.push(`${art} — ${d}`);
-          });
-        } else {
-          arr.forEach(d => {
-            const resp = ui.alert('Добавить в "Справочник"?', `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`, ui.ButtonSet.YES_NO);
-            if (resp === ui.Button.YES) {
-              shDict.appendRow([m.t, m.c, art, d, m.req]);
-              newDecs.push(`${art} — ${d}`);
-            }
-          });
-        }
-      });
-
-      if (rowsToAppend.length) {
-        const last = shDict.getLastRow();
-        const startRow = Math.max(2, last + 1);
-        shDict.getRange(startRow, 1, rowsToAppend.length, 5).setValues(rowsToAppend);
-      }
-    }
-  }
+  /* === Новые расшифровки === */
+  const newDecs = addNewDecodings_(shDict, toSuggest, meta, auto);
 
   /* === Запись флагов и стилей в РЕЕСТР АКТОВ === */
   if (shActs) {
