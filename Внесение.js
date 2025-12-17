@@ -79,6 +79,7 @@ function findStartRowForProv_(shProv) {
 
 //******************RUN TRANSFER************* */
 function runTransfer(options = {}) {
+  const startTime = new Date().getTime(); // 🔍 ПРОФИЛИРОВАНИЕ
   const auto = !!options.auto;
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
   const shIn  = ss.getSheetByName('⏬ ВНЕСЕНИЕ');
@@ -87,6 +88,11 @@ function runTransfer(options = {}) {
   const shActs= ss.getSheetByName('РЕЕСТР АКТОВ');
   const tz    = Session.getScriptTimeZone();
   const BIG_LIMIT = 1e6;
+  
+  function logTime(label) {
+    const elapsed = ((new Date().getTime() - startTime) / 1000).toFixed(2);
+    console.log(`⏱️ [${elapsed}s] ${label}`);
+  }
 
   const rowErrors = [];
   // Счётчики типов ошибок для компактной статистики
@@ -114,10 +120,13 @@ function runTransfer(options = {}) {
 
   // Очистим возможные нежелательные пробельные символы в B..F перед обработкой
   normalizeInputBF_(shIn);
+  logTime('normalizeInputBF_ завершена');
+  
   const inRange = shIn.getRange('B10:L40');
   const inVals  = inRange.getValues();   // [ [B..L], ... ]
+  logTime('чтение inVals завершено');
 
-  /* === Проверка месяца дат перед проведением (оставляем как было) === */
+  /* === Проверка месяца дат перед проведением (оптимизировано) === */
   (function precheckMonth_() {
     const now  = new Date();
     const curY = now.getFullYear();
@@ -147,55 +156,55 @@ function runTransfer(options = {}) {
 
     if (pastIdx.length === 0 && futureIdx.length === 0) return;
 
-    if (pastIdx.length > 0) {
-      if (!auto) {
-        const btn = confirmDialog_(
-          'Проверка дат (прошлый месяц)',
-          `Камрад, ты проводишь прошлый месяц (${pastIdx.length} строк). Так и надо?`
-        );
-        if (!btn) {
-          for (const i of pastIdx) {
-            const d = parseSheetDate_(inVals[i][0]);
-            if (!d) continue;
-            inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
-          }
+    // 🚀 ОПТИМИЗАЦИЯ: объединяем диалоги в один
+    if (!auto && (pastIdx.length > 0 || futureIdx.length > 0)) {
+      let msg = '';
+      if (pastIdx.length > 0) {
+        msg += `Прошлый месяц: ${pastIdx.length} строк\n`;
+      }
+      if (futureIdx.length > 0) {
+        msg += `Будущий месяц: ${futureIdx.length} строк\n`;
+      }
+      msg += '\nИсправить даты на текущий месяц?';
+
+      const btn = confirmDialog_('Проверка дат', msg);
+      
+      if (!btn) { // Пользователь выбрал "Нет" — исправляем даты
+        for (const i of pastIdx) {
+          const d = parseSheetDate_(inVals[i][0]);
+          if (!d) continue;
+          inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
+        }
+        for (const i of futureIdx) {
+          const d = parseSheetDate_(inVals[i][0]);
+          if (!d) continue;
+          inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
         }
       }
     }
 
-    if (futureIdx.length > 0) {
-      if (!auto) {
-        const btn = confirmDialog_(
-          'Проверка дат (будущий месяц)',
-          `Камрад, ты проводишь будущий месяц (${futureIdx.length} строк). Так и надо?`
-        );
-        if (!btn) {
-          for (const i of futureIdx) {
-            const d = parseSheetDate_(inVals[i][0]);
-            if (!d) continue;
-            inVals[i][0] = adjustDateToCurrentMonthClamp_(d);
-          }
-        }
-      }
-    }
-
+    // 🚀 ОПТИМИЗАЦИЯ: записываем даты один раз
     const dateCol = inVals.map(r => [r[0]]);
     shIn.getRange(10, 2, dateCol.length, 1).setValues(dateCol);
   })();
+  logTime('precheckMonth_ завершена');
 
   /* === Решаем, нужен ли вообще РЕЕСТР АКТОВ в этом запуске === */
   const needActsGrid = needsActsGrid(inVals);
+  logTime(`needsActsGrid = ${needActsGrid}`);
 
   /* === Справочник статей === */
   const dictIdx = buildDictionaryIndex_(shDict);
+  logTime('buildDictionaryIndex_ завершена');
   const pairs  = dictIdx.pairs;
   const acts   = dictIdx.acts;
   const hashes = dictIdx.hashes;
   const meta   = dictIdx.meta;
   const byDec  = dictIdx.byDec;
 
-  /* === Дубли по последним 100 строкам ПРОВОДОК (оставляем) === */
-  const existing = buildExistingEntriesSet(shProv, 100, tz);
+  /* === Дубли по последним 50 строкам ПРОВОДОК === */
+  const existing = buildExistingEntriesSet(shProv, 50, tz);
+  logTime('buildExistingEntriesSet завершена');
 
   /* === РЕЕСТР АКТОВ (только ключи и флаги, без сумм и остатков) === */
   let actsGrid = null;
@@ -205,6 +214,7 @@ function runTransfer(options = {}) {
     const actsIdx = buildActsIndex_(shActs);
     actsGrid = actsIdx.actsGrid;
     keyToRow = actsIdx.keyToRow;
+    logTime('buildActsIndex_ завершена');
   }
 
   /* === Сбор результатов === */
@@ -222,6 +232,81 @@ function runTransfer(options = {}) {
   const processedRows = new Set();    // индексы строк ⏬ ВНЕСЕНИЕ, которые успешно проведены
 
   /* === Основной цикл по строкам ⏬ ВНЕСЕНИЕ === */
+
+  // 🚀 ОПТИМИЗАЦИЯ: предварительный сбор всех вопросов для пользователя
+  const questionsCache = {}; // key → boolean (ответ пользователя)
+  
+  // Предварительно проверим дубли и акты, соберём вопросы (ТОЛЬКО если не auto режим)
+  if (!auto) {
+    const duplicateQuestions = [];
+    const actFlagQuestions = [];
+
+    for (let i = 0; i < inVals.length; i++) {
+      const r = inVals[i];
+      const isBlankRow = r.every(v => v == null || String(v).trim() === '');
+      if (isBlankRow) continue;
+
+      // Быстрая проверка: есть ли хотя бы сумма?
+      const hasAmount = r[2] !== '' && r[2] != null && isFinite(Number(r[2])) && Number(r[2]) !== 0;
+      if (!hasAmount) continue;
+
+      const basic = validateRowBasic(r, i);
+      if (!basic.ok) continue;
+
+      let { date, wallet, amount, article, decoding, act } = basic;
+      if (basic.wantsToday) date = new Date();
+
+      const key = `${fmtDate(date, tz)}|${article}|${decoding}|${amount}`;
+      const isMasterOrRetention = (article === '% Мастер' || article === 'Возврат удержания');
+
+      // Проверка дублей (только для обычных проводок)
+      if (!isMasterOrRetention && existing.has(key)) {
+        duplicateQuestions.push({ i, date, article, decoding, amount, key });
+      }
+
+      // Проверка повторных операций по актам
+      if (isMasterOrRetention && actsGrid) {
+        const actKey = makeActKey(decoding, act);
+        const info = findActRowByKey_(actsGrid, keyToRow, actKey);
+        if (!info.error) {
+          const isMaster = (article === '% Мастер');
+          const alreadyFlag = isMaster ? info.master : info.ret;
+          if (alreadyFlag) {
+            actFlagQuestions.push({ i, actKey });
+          }
+        }
+      }
+    }
+
+    // Задаём вопросы про дубли (если есть)
+    if (duplicateQuestions.length > 0) {
+      let msg = 'Обнаружены дубли:\n\n';
+      duplicateQuestions.forEach((q, idx) => {
+        msg += `${idx + 1}. ${fmtDate(q.date, tz)} | ${q.article} | ${q.decoding} | ${q.amount}\n`;
+      });
+      msg += '\nВнести все повторно?';
+      
+      const answerAll = confirmDialog_('Дубликаты проводок', msg);
+      duplicateQuestions.forEach(q => {
+        questionsCache[`duplicate_${q.key}`] = answerAll;
+      });
+    }
+
+    // Задаём вопросы про повторные операции по актам (если есть)
+    if (actFlagQuestions.length > 0) {
+      let msg = 'Обнаружены повторные выплаты по актам:\n\n';
+      actFlagQuestions.forEach((q, idx) => {
+        msg += `${idx + 1}. Строка B${10 + q.i}: акт ${q.actKey}\n`;
+      });
+      msg += '\nПовторить все операции?';
+      
+      const answerAll = confirmDialog_('Повторные операции по актам', msg);
+      actFlagQuestions.forEach(q => {
+        questionsCache[`act_flag_${q.actKey}`] = answerAll;
+      });
+    }
+  }
+  logTime('предварительная проверка вопросов завершена');
 
   // Вспомогательная функция: обрабатывает одну строку по индексу i
   function processRow(i) {
@@ -265,11 +350,10 @@ function runTransfer(options = {}) {
         dupDecl.push(`${article} ${decoding || ''}`);
         return;
       }
-      const resp = confirmDialog_(
-        'Дубль',
-        `Такая проводка уже есть:\n${fmtDate(date, tz)} | ${article} | ${decoding} | ${amount}\nВнести повторно?`
-      );
-      if (!resp) {
+      // 🚀 ОПТИМИЗАЦИЯ: используем кэш ответов
+      const cacheKey = `duplicate_${key}`;
+      const cached = questionsCache[cacheKey];
+      if (cached === false) {
         dupDecl.push(`${article} ${decoding || ''}`);
         return;
       }
@@ -324,11 +408,11 @@ function runTransfer(options = {}) {
           err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
           return;
         }
-        const ask2 = confirmDialog_(
-          'Повторная операция по акту',
-          'Камрад, по этому акту уже стояла галочка выплаты. Повторить операцию?'
-        );
-        if (!ask2) {
+        // 🚀 ОПТИМИЗАЦИЯ: используем кэш ответов
+        const actKey = makeActKey(decoding, act);
+        const cacheKey = `act_flag_${actKey}`;
+        const cached = questionsCache[cacheKey];
+        if (cached === false) {
           err(i, 'Отменено: по этому акту уже стояла галочка выплаты');
           return;
         }
@@ -365,6 +449,7 @@ function runTransfer(options = {}) {
     if (isBlankRow) continue;
     processRow(i);
   }
+  logTime(`обработка ${toWrite.length} строк завершена`);
 
   /* === Запись в ☑️ ПРОВОДКИ === */
   if (toWrite.length) {
@@ -397,6 +482,7 @@ function runTransfer(options = {}) {
     applyRevenueColors_(shActs, revenueColorsByRow);
     applyStyleBlocks_(shActs, ACTS_COL.HANDS, masterFlagRows);
     applyStyleBlocks_(shActs, ACTS_COL.DEPOSIT, depFlagRows);
+    logTime('запись в РЕЕСТР АКТОВ завершена');
   }
 
   /* === Финальный отчёт === */
@@ -429,7 +515,12 @@ function runTransfer(options = {}) {
   if (rowErrors.length) summaryParts.push(`Не проведено: ${rowErrors.length}`);
   if (newDecs.length)    summaryParts.push(`Добавлено расшифровок: ${newDecs.length}`);
   const summary = summaryParts.join('. ');
-  SpreadsheetApp.getActive().toast(summary, 'Готово', 8);
+  
+  logTime('ФИНИШ - все операции завершены'); // 🔍 ФИНАЛЬНЫЙ ЛОГ
+  const totalTime = ((new Date().getTime() - startTime) / 1000).toFixed(2);
+  console.log(`🏁 Общее время выполнения: ${totalTime}s`);
+  
+  SpreadsheetApp.getActive().toast(summary + ` (${totalTime}s)`, 'Готово', 8);
 
   // Логируем подробности и статистику для отладки (можно перенести в отдельный лист при необходимости)
   const stats = [];

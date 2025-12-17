@@ -202,39 +202,42 @@ function applyRevenueColors_(shActs, revenueColorsByRow) {
   shActs.getRange(minRow, 5, height, 1).setBackgrounds(bg);
 }
 
-/** Зачёркивание + зелёный фон для выплат ЗП/депозита */
+/**
+ * Зачёркивание + зелёный фон для выплат ЗП/депозита
+ * 🚀 ОПТИМИЗИРОВАНО: батчевая обработка всех стилей за 1 проход
+ * 
+ * @param {Sheet} shActs - Лист "РЕЕСТР АКТОВ"
+ * @param {number} colIndex - Номер колонки (ACTS_COL.HANDS или ACTS_COL.DEPOSIT)
+ * @param {Set<number>} rowsSet - Множество номеров строк для стилизации
+ */
 function applyStyleBlocks_(shActs, colIndex, rowsSet) {
   if (!shActs || !rowsSet || rowsSet.size === 0) return;
+  
   const rows = Array.from(rowsSet).sort((a,b)=>a-b);
   const minRow = rows[0];
   const maxRow = rows[rows.length - 1];
   const height = maxRow - minRow + 1;
 
   const rng = shActs.getRange(minRow, colIndex, height, 1);
+  
+  // Читаем все стили одним батчем
   const existingBG = rng.getBackgrounds();
   const existingFontColors = rng.getFontColors();
   const existingNotes = rng.getNotes();
+  const existingFontLines = rng.getFontLines();
 
+  // Применяем изменения к массивам
   rows.forEach(r => {
     const idx = r - minRow;
     existingBG[idx][0] = COLOR_BG_FULL_GREEN;
     existingFontColors[idx][0] = COLOR_FONT_DARKGREEN;
     existingNotes[idx][0] = '';
+    existingFontLines[idx][0] = 'line-through';
   });
 
+  // Записываем все стили одним батчем (4→1 операция)
   rng.setBackgrounds(existingBG);
   rng.setFontColors(existingFontColors);
   rng.setNotes(existingNotes);
-
-  let blockStart = rows[0];
-  let prev = rows[0];
-  for (let i = 1; i <= rows.length; i++) {
-    const cur = rows[i];
-    if (!cur || cur !== prev + 1) {
-      const len = prev - blockStart + 1;
-      shActs.getRange(blockStart, colIndex, len, 1).setFontLine('line-through');
-      blockStart = cur;
-    }
-    prev = cur;
-  }
+  rng.setFontLines(existingFontLines);
 }

@@ -108,23 +108,18 @@ function addNewDecodings_(shDict, toSuggest, meta, auto) {
   if (!toSuggest || toSuggest.size === 0) return newDecs; // Нечего добавлять
   if (auto) return newDecs; // В авто-режиме не добавляем (не показываем диалоги)
 
-  const ui = SpreadsheetApp.getUi();
-  
   // Спрашиваем: хочет ли пользователь добавить новые расшифровки?
-  const wantAddBtn = ui.alert(
+  const wantAdd = confirmDialog_(
     'Новые расшифровки', 
-    'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?', 
-    ui.ButtonSet.YES_NO
+    'Камрад, я вижу новые расшифровки. Хочешь добавить их в справочник?'
   );
-  if (wantAddBtn !== ui.Button.YES) return newDecs;
+  if (!wantAdd) return newDecs;
 
   // Спрашиваем: добавить все сразу или по одной?
-  const batchBtn = ui.alert(
+  const addAllAtOnce = confirmDialog_(
     'Режим добавления', 
-    'Добавить все сразу (Да) или по одной с подтверждением (Нет)?', 
-    ui.ButtonSet.YES_NO
+    'Добавить все сразу (Да) или по одной с подтверждением (Нет)?'
   );
-  const addAllAtOnce = (batchBtn === ui.Button.YES);
 
   const rowsToAppend = []; // Накопитель для батчевой записи
 
@@ -151,12 +146,11 @@ function addNewDecodings_(shDict, toSuggest, meta, auto) {
     } else {
       // Режим "по одной" — спрашиваем про каждую
       arr.forEach(d => {
-        const resp = ui.alert(
+        const resp = confirmDialog_(
           'Добавить в "Справочник"?', 
-          `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`, 
-          ui.ButtonSet.YES_NO
+          `Тип: ${m.t}\nКатегория: ${m.c}\nСтатья: ${art}\nРасшифровка: ${d}\n\nДобавить эту строку?`
         );
-        if (resp === ui.Button.YES) {
+        if (resp) {
           shDict.appendRow([m.t, m.c, art, d, m.req]);
           newDecs.push(`${art} — ${d}`);
         }
