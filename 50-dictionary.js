@@ -92,7 +92,14 @@ function addNewDecodings_(shDict, toSuggest, meta, auto) {
   if (rowsToAppend.length) {
     const last = shDict.getLastRow();
     const startRow = Math.max(2, last + 1);
-    shDict.getRange(startRow, 1, rowsToAppend.length, 5).setValues(rowsToAppend);
+    try {
+      if (!shDict) throw new Error('Лист Справочник не найден');
+      shDict.getRange(startRow, 1, rowsToAppend.length, 5).setValues(rowsToAppend);
+    } catch (e) {
+      console.error('Ошибка записи в Справочник:', e);
+      okDialog_('Ошибка', `Не удалось записать расшифровки: ${e.message}`);
+      return [];
+    }
   }
 
   return newDecs;

@@ -133,7 +133,10 @@ function runTransfer(options = {}) {
       if (!hasAmount) continue;
 
       const d = parseSheetDate_(row[0]);
-      if (!d) continue;
+      if (!d) {
+        console.warn(`Строка B${10 + i}: некорректная дата "${row[0]}", пропускаем`);
+        continue;
+      }
 
       const y = d.getFullYear();
       const m = d.getMonth();
@@ -382,6 +385,12 @@ function runTransfer(options = {}) {
         }
       }
 
+      // Проверяем bounds для безопасного доступа к actsGrid
+      if (res.gridIndex < 0 || res.gridIndex >= actsGrid.length) {
+        err(i, `Внутренняя ошибка: некорректный индекс акта (${res.gridIndex})`);
+        return;
+      }
+
       actsGrid[res.gridIndex][targetCol - 1] = true;
       if (isMaster) masterFlagRows.add(res.row);
       else          depFlagRows.add(res.row);
@@ -420,8 +429,16 @@ function runTransfer(options = {}) {
     if (curFilter) curFilter.remove();
 
     const start = findStartRowForProv_(shProv);
-    shProv.getRange(start, 1, toWrite.length, 10).setValues(toWrite);
-    colorRows_(shProv, start, toWrite);
+    
+    try {
+      if (!shProv) throw new Error('Лист "☑️ ПРОВОДКИ" не найден');
+      shProv.getRange(start, 1, toWrite.length, 10).setValues(toWrite);
+      colorRows_(shProv, start, toWrite);
+    } catch (e) {
+      console.error('Ошибка записи в ПРОВОДКИ:', e);
+      okDialog_('Ошибка', `Не удалось записать проводки: ${e.message}`);
+      return;
+    }
 
     const newLast = start + toWrite.length - 1;
     PropertiesService.getDocumentProperties()

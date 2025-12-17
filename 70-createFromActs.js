@@ -72,9 +72,9 @@ function createEntriesFromSelectedActs_({ mode }) {
     const addr  = rowData[1]; // B (index 1)
     const actNo = rowData[2]; // C (index 2)
     const amountCol =
-      mode === 'MASTER'         ? 10 : // K (index 10)
-      mode === 'DEPOSIT_RETURN' ? 9  : // J (index 9)
-      mode === 'REVENUE'        ? 4  : // E (index 4)
+      mode === 'MASTER'         ? ACTS_COL.HANDS - 1    : // K (на руки)
+      mode === 'DEPOSIT_RETURN' ? ACTS_COL.DEPOSIT - 1  : // J (возврат)
+      mode === 'REVENUE'        ? 4  : // E (выручка, нет в ACTS_COL)
       -1;
 
     const amountCell = amountCol >= 0 ? rowData[amountCol] : '';
