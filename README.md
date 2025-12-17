@@ -129,7 +129,7 @@
 
 **Зависимости:** `00-constants.js` (NBSP_RE, MOSCOW_TZ)
 
-### `12-formatting.js` — Форматирование и вспомогательные хелперы
+### `55-formatting.js` — Форматирование и вспомогательные хелперы
 **Назначение:** раскраска проводок, обработка переводов между кошельками, выбор статей  
 **Ключевые функции:**
 - `colorRows_(sh, start, rows)` — применяет цветовую разметку к колонкам B (кошелёк) и C (сумма) в ПРОВОДКИ
@@ -481,7 +481,7 @@ WALLET_COLORS = new Map([
 ```bash
 node --check 00-constants.js
 node --check 10-utils.js
-node --check 12-formatting.js
+node --check 55-formatting.js
 node --check 20-ui-dialogs.js
 node --check 40-acts.js
 node --check 50-dictionary.js

@@ -74,7 +74,7 @@ function createEntriesFromSelectedActs_({ mode }) {
     const amountCol =
       mode === 'MASTER'         ? ACTS_COL.HANDS - 1    : // K (на руки)
       mode === 'DEPOSIT_RETURN' ? ACTS_COL.DEPOSIT - 1  : // J (возврат)
-      mode === 'REVENUE'        ? 4  : // E (выручка, нет в ACTS_COL)
+      mode === 'REVENUE'        ? ACTS_COL.REVENUE - 1  : // E (выручка)
       -1;
 
     const amountCell = amountCol >= 0 ? rowData[amountCol] : '';

@@ -2,8 +2,9 @@
 
 // Глобальная карта колонок для листа актов
 const ACTS_COL = {
-  ADDR: 2,
-  ACTNO: 3,
+  ADDR: 2,          // B
+  ACTNO: 3,         // C
+  REVENUE: 5,       // E (сумма акта/выручка)
   WAGE_BY_ACT: 9,   // I
   DEPOSIT: 10,      // J
   HANDS: 11,        // K
