@@ -478,10 +478,15 @@ function runTransfer(options = {}) {
 
   /* === Запись флагов и стилей в РЕЕСТР АКТОВ === */
   if (shActs) {
+    logTime('СТАРТ записи в РЕЕСТР АКТОВ');
     applyActsFlags_(shActs, masterFlagRows, depFlagRows);
+    logTime('  └─ applyActsFlags_ завершена');
     applyRevenueColors_(shActs, revenueColorsByRow);
+    logTime('  └─ applyRevenueColors_ завершена');
     applyStyleBlocks_(shActs, ACTS_COL.HANDS, masterFlagRows);
+    logTime('  └─ applyStyleBlocks_ (HANDS) завершена');
     applyStyleBlocks_(shActs, ACTS_COL.DEPOSIT, depFlagRows);
+    logTime('  └─ applyStyleBlocks_ (DEPOSIT) завершена');
     logTime('запись в РЕЕСТР АКТОВ завершена');
   }
 

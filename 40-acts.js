@@ -154,8 +154,6 @@ function applyActsFlags_(shActs, masterFlagRows, depFlagRows) {
   
   const lastActsRow = shActs.getLastRow();
   if (lastActsRow <= 1) return; // Нет данных
-  
-  const height = Math.max(1, lastActsRow - 1); // Количество строк с данными
 
   /**
    * Вспомогательная функция: проставляет галочки в одной колонке
@@ -166,19 +164,26 @@ function applyActsFlags_(shActs, masterFlagRows, depFlagRows) {
   function setFlagColumn(colIndex, rowsSet) {
     if (!rowsSet || rowsSet.size === 0) return; // Нечего проставлять
     
-    // Читаем всю колонку одним запросом
+    // 🚀 ОПТИМИЗАЦИЯ: для малых изменений (<5 строк) — точечные операции
+    if (rowsSet.size < 5) {
+      rowsSet.forEach(r => {
+        shActs.getRange(r, colIndex).setValue(true);
+      });
+      return;
+    }
+    
+    // Для больших изменений — батчевая операция
+    const height = Math.max(1, lastActsRow - 1);
     const colRange = shActs.getRange(2, colIndex, height, 1);
     const colVals = colRange.getValues();
     
-    // Проставляем true для нужных строк
     rowsSet.forEach(r => {
-      const idx = r - 2; // Преобразуем номер строки в индекс массива
+      const idx = r - 2;
       if (idx >= 0 && idx < colVals.length) {
-        colVals[idx][0] = true; // Ставим галочку
+        colVals[idx][0] = true;
       }
     });
     
-    // Записываем обратно одним запросом (быстро!)
     colRange.setValues(colVals);
   }
 
@@ -204,7 +209,7 @@ function applyRevenueColors_(shActs, revenueColorsByRow) {
 
 /**
  * Зачёркивание + зелёный фон для выплат ЗП/депозита
- * 🚀 ОПТИМИЗИРОВАНО: батчевая обработка всех стилей за 1 проход
+ * 🚀 ОПТИМИЗИРОВАНО: батчевая обработка для >5 строк, точечная для ≤5
  * 
  * @param {Sheet} shActs - Лист "РЕЕСТР АКТОВ"
  * @param {number} colIndex - Номер колонки (ACTS_COL.HANDS или ACTS_COL.DEPOSIT)
@@ -214,19 +219,31 @@ function applyStyleBlocks_(shActs, colIndex, rowsSet) {
   if (!shActs || !rowsSet || rowsSet.size === 0) return;
   
   const rows = Array.from(rowsSet).sort((a,b)=>a-b);
+  
+  // 🚀 ОПТИМИЗАЦИЯ: для малых изменений (<5 строк) — точечные операции
+  if (rows.length < 5) {
+    rows.forEach(r => {
+      const cell = shActs.getRange(r, colIndex);
+      cell.setBackground(COLOR_BG_FULL_GREEN);
+      cell.setFontColor(COLOR_FONT_DARKGREEN);
+      cell.setNote('');
+      cell.setFontLine('line-through');
+    });
+    return;
+  }
+  
+  // Для больших изменений — батчевая операция
   const minRow = rows[0];
   const maxRow = rows[rows.length - 1];
   const height = maxRow - minRow + 1;
 
   const rng = shActs.getRange(minRow, colIndex, height, 1);
   
-  // Читаем все стили одним батчем
   const existingBG = rng.getBackgrounds();
   const existingFontColors = rng.getFontColors();
   const existingNotes = rng.getNotes();
   const existingFontLines = rng.getFontLines();
 
-  // Применяем изменения к массивам
   rows.forEach(r => {
     const idx = r - minRow;
     existingBG[idx][0] = COLOR_BG_FULL_GREEN;
@@ -235,7 +252,6 @@ function applyStyleBlocks_(shActs, colIndex, rowsSet) {
     existingFontLines[idx][0] = 'line-through';
   });
 
-  // Записываем все стили одним батчем (4→1 операция)
   rng.setBackgrounds(existingBG);
   rng.setFontColors(existingFontColors);
   rng.setNotes(existingNotes);
