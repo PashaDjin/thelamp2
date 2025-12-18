@@ -236,22 +236,39 @@ function runTransfer(options = {}) {
   // 🚀 ОПТИМИЗАЦИЯ: предварительный сбор всех вопросов для пользователя
   const questionsCache = {}; // key → boolean (ответ пользователя)
   
-  // Предварительно проверим дубли и акты, соберём вопросы (ТОЛЬКО если не auto режим)
-  if (!auto) {
+  // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: пропускаем предпроверку в auto режиме
+  // или если нет существующих проводок (нечего проверять на дубли)
+  if (!auto && existing.size > 0) {
     const duplicateQuestions = [];
     const actFlagQuestions = [];
+    
+    let validatedCount = 0;
+    let skippedBlank = 0;
+    let skippedNoAmount = 0;
+    let skippedInvalid = 0;
 
     for (let i = 0; i < inVals.length; i++) {
       const r = inVals[i];
-      const isBlankRow = r.every(v => v == null || String(v).trim() === '');
-      if (isBlankRow) continue;
+      
+      // 🚀 Быстрая проверка пустой строки (одна операция вместо .every())
+      if (!r[2]) { // Если нет суммы (колонка D) — строка пустая или невалидная
+        skippedBlank++;
+        continue;
+      }
 
-      // Быстрая проверка: есть ли хотя бы сумма?
       const hasAmount = r[2] !== '' && r[2] != null && isFinite(Number(r[2])) && Number(r[2]) !== 0;
-      if (!hasAmount) continue;
+      if (!hasAmount) {
+        skippedNoAmount++;
+        continue;
+      }
 
       const basic = validateRowBasic(r, i);
-      if (!basic.ok) continue;
+      if (!basic.ok) {
+        skippedInvalid++;
+        continue;
+      }
+      
+      validatedCount++;
 
       let { date, wallet, amount, article, decoding, act } = basic;
       if (basic.wantsToday) date = new Date();
@@ -305,6 +322,8 @@ function runTransfer(options = {}) {
         questionsCache[`act_flag_${q.actKey}`] = answerAll;
       });
     }
+    
+    console.log(`Предпроверка: обработано ${validatedCount} строк (пропущено: ${skippedBlank} пустых, ${skippedNoAmount} без суммы, ${skippedInvalid} невалидных)`);
   }
   logTime('предварительная проверка вопросов завершена');
 
